@@ -1,7 +1,5 @@
 
 [![build status](https://github.com/mithi/hexapod/workflows/build/badge.svg)](https://hexapod.netlify.app)
-[![Code Climate](https://codeclimate.com/github/mithi/hexapod/badges/gpa.svg)](https://codeclimate.com/github/mithi/hexapod)
-[![technical debt](https://img.shields.io/codeclimate/tech-debt/mithi/hexapod)](https://codeclimate.com/github/mithi/hexapod/trends/technical_debt)
 [![codecov](https://codecov.io/gh/mithi/hexapod/branch/master/graph/badge.svg)](https://codecov.io/gh/mithi/hexapod)
 [![code style: prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg?style=flat)](https://github.com/prettier/prettier)
 [![buy me coffee](https://img.shields.io/badge/Buy%20me%20-coffee!-orange.svg?logo=buy-me-a-coffee&color=795548)](https://ko-fi.com/minimithi)
@@ -13,6 +11,8 @@
 </p>
 
 You can use this web app to solve inverse kinematics, simulate various gaits, and more. In real time, you can also view all the angles the robot's eighteen joints make at any particular pose. All the computations are solely done in your browser, nothing's fetching data from somewhere else, so it should be fast. Another (somewhat) cool thing is that this app does NOT depend on any external mathematics library; it only uses Javascript's built-in Math object.
+
+👉 [hexapod.netlify.app](https://hexapod.netlify.app)
 
 Consider buying me [a few cups of coffee ☕ ☕ ☕](https://ko-fi.com/minimithi) to motivate me to build other robotics-related visualizers. (Quadrotors?!)
 
@@ -63,10 +63,3 @@ Any contribution to improve the source code is always appreciated. [See contribu
 ![top language](https://img.shields.io/github/languages/top/mithi/hexapod)
 ![code files size](https://img.shields.io/github/languages/code-size/mithi/hexapod?color=yellow)
 ![repo size](https://img.shields.io/github/repo-size/mithi/hexapod?color=violet)
-[![code base blanks count](https://tokei.rs/b1/github/mithi/hexapod?category=blanks)](https://github.com/mithi/hexapod)
-[![code base line count](https://tokei.rs/b1/github/mithi/hexapod?category=lines)](https://github.com/mithi/hexapod)
-[![number of files count](https://tokei.rs/b1/github/mithi/hexapod?category=files)](https://github.com/mithi/hexapod)
-[![number of comments line in code base](https://tokei.rs/b1/github/mithi/hexapod?category=comments)](https://github.com/mithi/hexapod)
-[![lines of code](https://tokei.rs/b1/github/mithi/hexapod?category=code)](https://github.com/mithi/hexapod)
-[![HitCount](http://hits.dwyl.com/mithi/hexapod.svg)](http://hits.dwyl.com/mithi/hexapod)
-
