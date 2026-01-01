@@ -1,8 +1,7 @@
 
 [![build status](https://github.com/mithi/hexapod/workflows/build/badge.svg)](https://hexapod.netlify.app)
-[![codecov](https://codecov.io/gh/mithi/hexapod/branch/master/graph/badge.svg)](https://codecov.io/gh/mithi/hexapod)
-[![code style: prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg?style=flat)](https://github.com/prettier/prettier)
 [![buy me coffee](https://img.shields.io/badge/Buy%20me%20-coffee!-orange.svg?logo=buy-me-a-coffee&color=795548)](https://ko-fi.com/minimithi)
+[![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat)](https://opensource.org/licenses/Apache-2.0)
 
 # Mithi's Bare-Minimum Hexapod Robot Simulator 2
 
@@ -56,10 +55,11 @@ Any contribution to improve the source code is always appreciated. [See contribu
 
 ## I love badges! (Don't we all?)
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat)](https://opensource.org/licenses/Apache-2.0)
-[![code climate issues](https://img.shields.io/codeclimate/issues/mithi/hexapod?label=code%20climate%20issues)](https://codeclimate.com/github/mithi/hexapod/issues)
 [![last commit](https://img.shields.io/github/last-commit/mithi/hexapod)](https://github.com/mithi/hexapod/commits/master)
 [![commits per month](https://img.shields.io/github/commit-activity/m/mithi/hexapod?color=yellow&style=flat)](https://github.com/mithi/hexapod/graphs/commit-activity)
 ![top language](https://img.shields.io/github/languages/top/mithi/hexapod)
 ![code files size](https://img.shields.io/github/languages/code-size/mithi/hexapod?color=yellow)
 ![repo size](https://img.shields.io/github/repo-size/mithi/hexapod?color=violet)
+[![codecov](https://codecov.io/gh/mithi/hexapod/branch/master/graph/badge.svg)](https://codecov.io/gh/mithi/hexapod)
+[![code style: prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg?style=flat)](https://github.com/prettier/prettier)
+
