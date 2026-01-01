@@ -44,7 +44,7 @@ jobs:
      # so there's no need to include a step install Yarn.
 
     - name: Add prettier
-      run: yarn add prettier --dev
+      run: yarn add prettier@2.8.8 --dev
 
     - name: Check code style
       run: yarn run prettier --config ./.prettierrc.yaml --check  ./src/*
