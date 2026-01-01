@@ -16,42 +16,27 @@ jobs:
         runs-on: ubuntu-latest
         strategy:
             matrix:
-                node-version: [10.x]
+                node-version: [16.x]
 
         # Steps represent a sequence of tasks that will be executed as part of the job
         steps:
             # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-            - uses: actions/checkout@v2
-
-            - name: Get yarn cache directory path
-              id: yarn-cache-dir-path
-              run: echo "::set-output name=dir::$(yarn cache dir)"
-
-            - uses: actions/cache@v3
-              id: yarn-cache # use this to check for `cache-hit` (`steps.yarn-cache.outputs.cache-hit != 'true'`)
-              with:
-                  path: ${{ steps.yarn-cache-dir-path.outputs.dir }}
-                  key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
-                  restore-keys: |
-                      ${{ runner.os }}-yarn-
+            - uses: actions/checkout@v4
 
             - name: Setup node
-              uses: actions/setup-node@v1
+              uses: actions/setup-node@v4
               with:
-                  node-version: ${{ matrix.node }}
+                  node-version: ${{ matrix.node-version }}
+                  cache: "yarn"
 
-              # Yarn is included in the list of software installed on the GitHub-hosted Ubuntu
-              # so there's no need to include a step install Yarn.
+            # Yarn is included in the list of software installed on the GitHub-hosted Ubuntu
+            # so there's no need to include a step install Yarn.
 
-            - name: Add prettier
-              run: yarn add prettier@2.8.8 --dev
+            - name: Install dependencies
+              run: yarn
 
             - name: Check code style
               run: yarn run prettier --config ./.prettierrc.yaml --check  ./src/*
-
-            - name: Install project dependencies
-              if: steps.yarn-cache.outputs.cache-hit != 'true'
-              run: yarn
 
             - name: Build project
               run: yarn build
@@ -60,7 +45,7 @@ jobs:
               run: yarn test --watchAll=false --coverage
 
             - name: Upload coverage to Codecov
-              uses: codecov/codecov-action@v1
+              uses: codecov/codecov-action@v4
               with:
                   name: codecov-umbrella
                   fail_ci_if_error: false
