@@ -1,95 +1,121 @@
-import React from "react"
+import React, { useState, useEffect } from "react"
 import { BrowserRouter as Router } from "react-router-dom"
 import { DEFAULT_POSE } from "./templates"
 import { SECTION_NAMES } from "./components/vars"
 import { Nav, NavDetailed, DimensionsWidget } from "./components"
 import { updateHexapod, Page } from "./AppHelpers"
 import HexapodPlot from "./components/HexapodPlot"
+import { useMqtt } from "./hooks/useMqtt"
 
 window.dataLayer = window.dataLayer || []
 function gtag() {
     window.dataLayer.push(arguments)
 }
 
-class App extends React.Component {
-    state = {
-        inHexapodPage: false,
-        hexapod: updateHexapod("default"),
-        revision: 0,
-    }
+function App() {
+    const [inHexapodPage, setInHexapodPage] = useState(false)
+    const [hexapod, setHexapod] = useState(() => updateHexapod("default"))
+    const [revision, setRevision] = useState(0)
+
+    // 1. Initialize our central MQTT communication hook
+    const { isConnected, telemetry, logs, publishImmediate } = useMqtt()
+
+    // 2. 1Hz Keep-Alive Watchdog Heartbeat
+    useEffect(() => {
+        if (!isConnected) return
+        
+        const interval = setInterval(() => {
+            publishImmediate("hexapod/cmd", { type: "system", ping: true })
+        }, 1000) // Emit lightweight system ping every 1000ms
+
+        return () => clearInterval(interval)
+    }, [isConnected, publishImmediate])
 
     /* * * * * * * * * * * * * *
      * Page load Callback
      * * * * * * * * * * * * * */
-
-    onPageLoad = pageName => {
+    const onPageLoad = pageName => {
         document.title = pageName + " - Mithi's Bare Minimum Hexapod Robot Simulator"
         gtag("config", "UA-170794768-1", {
             page_path: window.location.pathname + window.location.search,
         })
 
         if (pageName === SECTION_NAMES.landingPage) {
-            this.setState({ inHexapodPage: false })
+            setInHexapodPage(false)
             return
         }
 
-        this.setState({ inHexapodPage: true })
-        this.manageState("pose", { pose: DEFAULT_POSE })
+        setInHexapodPage(true)
+        manageState("pose", { pose: DEFAULT_POSE })
     }
 
     /* * * * * * * * * * * * * *
      * State Management Callback
      * * * * * * * * * * * * * */
-
-    manageState = (updateType, newParam) => {
-        const hexapod = updateHexapod(updateType, newParam, this.state.hexapod)
-
-        this.setState({
-            revision: this.state.revision + 1,
-            hexapod,
+    const manageState = (updateType, newParam) => {
+        setHexapod(prevHexapod => {
+            const nextHexapod = updateHexapod(updateType, newParam, prevHexapod)
+            setRevision(prev => prev + 1)
+            return nextHexapod
         })
     }
+
     /* * * * * * * * * * * * * *
      * Page Component Prototype
      * * * * * * * * * * * * * */
-
-    pageComponent = Component => (
+    const pageComponent = Component => (
         <Component
-            onMount={this.onPageLoad}
-            onUpdate={this.manageState}
+            onMount={onPageLoad}
+            onUpdate={manageState}
             params={{
-                dimensions: this.state.hexapod.dimensions,
-                pose: this.state.hexapod.pose,
+                dimensions: hexapod.dimensions,
+                pose: hexapod.pose,
             }}
         />
     )
 
     /* * * * * * * * * * * * * *
-     * Layout
+     * Layout Rendering
      * * * * * * * * * * * * * */
-
-    render = () => (
+    return (
         <Router>
             <Nav />
             <div id="main">
                 <div id="sidebar">
-                    <div hidden={!this.state.inHexapodPage}>
+                    {/* Live connection HUD widget */}
+                    <div className="border" style={{ marginBottom: "15px", padding: "10px" }}>
+                        <span style={{ fontSize: "0.75rem", fontWeight: "bold" }}>
+                            ROBOT STATUS:{" "}
+                        </span>
+                        <span 
+                            className={!isConnected ? "red" : ""} 
+                            style={{ 
+                                fontSize: "0.75rem", 
+                                color: isConnected ? "var(--c1-green)" : "var(--c6-red)",
+                                fontWeight: "bolder"
+                            }}
+                        >
+                            {isConnected ? "CONNECTED TO BROKER" : "DISCONNECTED"}
+                        </span>
+                    </div>
+
+                    <div hidden={!inHexapodPage}>
                         <DimensionsWidget
-                            params={{ dimensions: this.state.hexapod.dimensions }}
-                            onUpdate={this.manageState}
+                            params={{ dimensions: hexapod.dimensions }}
+                            onUpdate={manageState}
                         />
                     </div>
-                    <Page pageComponent={this.pageComponent} />
-                    {!this.state.inHexapodPage ? <NavDetailed /> : null}
+                    <Page pageComponent={pageComponent} />
+                    {!inHexapodPage ? <NavDetailed /> : null}
                 </div>
-                <div id="plot" className="border" hidden={!this.state.inHexapodPage}>
+                <div id="plot" className="border" hidden={!inHexapodPage}>
                     <HexapodPlot
-                        revision={this.state.revision}
-                        hexapod={this.state.hexapod}
+                        revision={revision}
+                        hexapod={hexapod}
                     />
                 </div>
             </div>
-            {this.state.inHexapodPage ? <NavDetailed /> : null}
+            {inHexapodPage ? <NavDetailed /> : null}
         </Router>
     )
 }
