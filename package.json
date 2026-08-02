@@ -3,7 +3,7 @@
     "version": "0.1.0",
     "private": true,
     "dependencies": {
-        "mqtt": "^4.3.7", 
+        "mqtt": "^4.3.7",
         "plotly.js": "^1.54.7",
         "plotly.js-gl3d-dist-min": "^1.54.7",
         "react": "^16.13.1",
@@ -14,10 +14,10 @@
         "react-scripts": "3.4.4"
     },
     "scripts": {
-        "analyze": "node scripts/analyze.js",
-        "start": "react-scripts start",
-        "build": "react-scripts build",
-        "test": "react-scripts test",
+        "analyze": "cross-env NODE_OPTIONS=--openssl-legacy-provider node scripts/analyze.js",
+        "start": "cross-env NODE_OPTIONS=--openssl-legacy-provider react-scripts start",
+        "build": "cross-env NODE_OPTIONS=--openssl-legacy-provider react-scripts build",
+        "test": "cross-env NODE_OPTIONS=--openssl-legacy-provider react-scripts test",
         "eject": "react-scripts eject"
     },
     "eslintConfig": {
@@ -39,6 +39,7 @@
         "@testing-library/jest-dom": "^4.2.4",
         "@testing-library/react": "^9.3.2",
         "@testing-library/user-event": "^7.1.2",
+        "cross-env": "^10.1.0",
         "jest-canvas-mock": "^2.2.0",
         "prettier": "^2.3.0",
         "progress-bar-webpack-plugin": "^2.1.0",
