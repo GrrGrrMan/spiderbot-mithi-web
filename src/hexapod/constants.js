@@ -59,13 +59,13 @@ const MAX_ANGLES = {
          x4           x5
       (+225)        (+315)
  */
-const POSITION_NAME_TO_AXIS_ANGLE_MAP = {
-    rightMiddle: 0,
-    rightFront: 45,
-    leftFront: 135,
-    leftMiddle: 180,
-    leftBack: 225,
-    rightBack: 315,
+const DEFAULT_DIMENSIONS = {
+    front: 50,    // Scaled to match 0.5 * R
+    side: 86.6,   // Scaled to match 0.866 * R
+    middle: 100,  // The outer radius R of the center chassis
+    coxia: 52,    // Matches COXA_LENGTH_MM
+    femur: 66,    // Matches FEMUR_LENGTH_MM
+    tibia: 132,   // Matches TIBIA_LENGTH_MM
 }
 
 const POSITION_NAME_TO_IS_LEFT_MAP = {
