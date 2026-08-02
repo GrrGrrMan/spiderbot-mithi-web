@@ -2,26 +2,6 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import mqtt from "mqtt"
 
-const getBrokerUrl = () => {
-    const params = new URLSearchParams(window.location.search);
-    const queryBroker = params.get("broker");
-    
-    // 1. Manual override via URL (e.g., http://localhost:3000/?broker=pi-hub.local)
-    if (queryBroker) {
-        return `ws://${queryBroker}:9001`;
-    }
-    
-    const hostname = window.location.hostname;
-    
-    // 2. Development Mode: Fallback to the EMQX cloud broker for Wokwi testing
-    if (hostname === "localhost" || hostname === "127.0.0.1") {
-        return "ws://broker.emqx.io:8083/mqtt";
-    }
-    
-    // 3. Production Mode: Auto-resolve to RPi's active address (192.168.4.1 or pi-hub.local)
-    return `ws://${hostname}:9001`;
-};
-
 export function useMqtt(brokerUrl = "ws://192.168.4.1:9001", deviceId = "hexapod-cam-01") {
     const [isConnected, setIsConnected] = useState(false)
     const [telemetry, setTelemetry] = useState(null)
@@ -31,14 +11,12 @@ export function useMqtt(brokerUrl = "ws://192.168.4.1:9001", deviceId = "hexapod
     const lastPublishRef = useRef(0)
 
     useEffect(() => {
-        const resolvedUrl = brokerUrlOverride || getBrokerUrl();
-        console.log(`[MQTT WebUI] Attempting WebSocket connection to: ${resolvedUrl}`);
-        
-        const client = mqtt.connect(resolvedUrl, {
+        // Connect via WebSocket (ws:// or wss://)
+        const client = mqtt.connect(brokerUrl, {
             clientId: `web-ui-${Math.random().toString(16).substr(2, 8)}`,
             clean: true,
             reconnectPeriod: 5000,
-        });
+        })
 
         client.on("connect", () => {
             setIsConnected(true)
