@@ -1,9 +1,10 @@
 import React, { Component } from "react"
 import { sliderList, Card, ResetButton, AlertBox } from "../generic"
 import { solveInverseKinematics } from "../../hexapod"
-import { SECTION_NAMES, IK_SLIDERS_LABELS } from "../vars"
+import { SECTION_NAMES, RANGE_PARAMS, IK_SLIDERS_LABELS } from "../vars"
 import { DEFAULT_IK_PARAMS } from "../../templates"
 import PoseTable from "../pagePartials/PoseTable"
+
 
 class InverseKinematicsPage extends Component {
     pageName = SECTION_NAMES.inverseKinematics
@@ -55,6 +56,7 @@ class InverseKinematicsPage extends Component {
             names: IK_SLIDERS_LABELS,
             values: this.state.ikParams,
             handleChange: this.updateIkParams,
+            rangeParams: RANGE_PARAMS,
         })
     }
 

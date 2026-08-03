@@ -1,3 +1,5 @@
+import { ZERO_POSE } from "../hexapod"
+
 const DEFAULT_BODY_DIMENSIONS = {
     front: 50,
     side: 86.6,
@@ -18,15 +20,7 @@ const DEFAULT_DIMENSIONS = {
     tibia: 132,    // Matches physical TIBIA_LENGTH_MM
 }
 
-
-const DEFAULT_POSE = {
-    leftFront: { alpha: 0, beta: 0, gamma: 0 },
-    rightFront: { alpha: 0, beta: 0, gamma: 0 },
-    leftMiddle: { alpha: 0, beta: 0, gamma: 0 },
-    rightMiddle: { alpha: 0, beta: 0, gamma: 0 },
-    leftBack: { alpha: 0, beta: 0, gamma: 0 },
-    rightBack: { alpha: 0, beta: 0, gamma: 0 },
-}
+const DEFAULT_POSE = ZERO_POSE
 
 const DEFAULT_PATTERN_PARAMS = { alpha: 0, beta: 0, gamma: 0 }
 

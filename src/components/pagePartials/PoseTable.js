@@ -1,14 +1,5 @@
 import React from "react"
-import { POSITION_NAMES_LIST } from "../../hexapod"
-
-const POSITION_ALIAS = {
-    rightMiddle: "rm",
-    rightFront: "rf",
-    leftFront: "lf",
-    leftMiddle: "lm",
-    leftBack: "lb",
-    rightBack: "rb",
-}
+import { POSITION_NAMES_LIST, POSITION_ALIAS } from "../../hexapod"
 
 const formatPose = pose =>
     POSITION_NAMES_LIST.reduce((formattedPose, position) => {

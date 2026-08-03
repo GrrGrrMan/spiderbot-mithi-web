@@ -76,13 +76,14 @@
   "" this.id : a number from 0 to 5 corresponding to a particular position
 
   * * * * */
-import { tRotYmatrix, tRotZmatrix, multiply4x4 } from "./geometry"
+import { tRotYmatrix, tRotZmatrix, multiply4x4, transformMethods } from "./geometry"
 import {
     LEG_POINT_TYPES_LIST,
     POSITION_NAME_TO_ID_MAP,
     POSITION_NAME_TO_AXIS_ANGLE_MAP,
 } from "./constants"
 import Vector from "./Vector"
+
 
 class Linkage {
     constructor(
@@ -151,17 +152,6 @@ class Linkage {
      * if the last column of of the matrix have non-zero elements
      * and again be translated by tx, ty, tz
      * */
-    cloneTrotShift(transformMatrix, tx, ty, tz) {
-        return this._doTransform("cloneTrotShift", transformMatrix, tx, ty, tz)
-    }
-
-    cloneTrot(transformMatrix) {
-        return this._doTransform("cloneTrot", transformMatrix)
-    }
-
-    cloneShift(tx, ty, tz) {
-        return this._doTransform("cloneShift", tx, ty, tz)
-    }
 
     _doTransform(transformFunction, ...args) {
         const newPointsList = this.allPointsList.map(oldPoint =>
@@ -286,5 +276,7 @@ class Linkage {
         return allPointsList
     }
 }
+
+Object.assign(Linkage.prototype, transformMethods)
 
 export default Linkage

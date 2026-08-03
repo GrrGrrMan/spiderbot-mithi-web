@@ -36,6 +36,7 @@
  * * */
 import { POSITION_NAMES_LIST } from "./constants"
 import Vector from "./Vector"
+import { transformMethods } from "./geometry"
 
 class Hexagon {
     dimensions
@@ -68,18 +69,6 @@ class Hexagon {
         return [...this.verticesList, this.cog, this.head]
     }
 
-    cloneTrotShift(transformMatrix, tx, ty, tz) {
-        return this._doTransform("cloneTrotShift", transformMatrix, tx, ty, tz)
-    }
-
-    cloneTrot(transformMatrix) {
-        return this._doTransform("cloneTrot", transformMatrix)
-    }
-
-    cloneShift(tx, ty, tz) {
-        return this._doTransform("cloneShift", tx, ty, tz)
-    }
-
     _doTransform(transformFunction, ...args) {
         let clone = new Hexagon(this.dimensions, { hasNoPoints: true })
         clone.cog = this.cog[transformFunction](...args)
@@ -90,5 +79,7 @@ class Hexagon {
         return clone
     }
 }
+
+Object.assign(Hexagon.prototype, transformMethods)
 
 export default Hexagon

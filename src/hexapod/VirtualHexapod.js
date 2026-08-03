@@ -1,6 +1,5 @@
-import { POSITION_NAMES_LIST, POSITION_NAME_TO_ID_MAP } from "./constants"
+import { POSITION_NAMES_LIST, POSITION_NAME_TO_ID_MAP, ZERO_POSE } from "./constants"
 import { matrixToAlignVectorAtoB, tRotZmatrix } from "./geometry"
-import { DEFAULT_POSE } from "../templates"
 
 import Vector from "./Vector"
 import Hexagon from "./Hexagon"
@@ -268,9 +267,8 @@ class VirtualHexapod {
     }
 
     _handleComplexTwist(verticesList) {
-        // prettier-ignore
         const defaultLegs = buildLegsList(
-            verticesList, DEFAULT_POSE, this.legDimensions
+            verticesList, ZERO_POSE, this.legDimensions
         )
 
         // DefaultLegs: The list of legs when a hexapod
