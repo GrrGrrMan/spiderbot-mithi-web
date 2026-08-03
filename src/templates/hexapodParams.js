@@ -1,22 +1,23 @@
 const DEFAULT_BODY_DIMENSIONS = {
-    front: 100,
-    side: 100,
+    front: 50,
+    side: 86.6,
     middle: 100,
 }
 const DEFAULT_LEG_DIMENSIONS = {
-    coxia: 100,
-    femur: 100,
-    tibia: 100,
+    coxia: 52,
+    femur: 66,
+    tibia: 132,
 }
 
 const DEFAULT_DIMENSIONS = {
-    front: 100,
-    side: 100,
-    middle: 100,
-    coxia: 100,
-    femur: 100,
-    tibia: 100,
+    front: 50,     // 0.5 * R
+    side: 86.6,    // 0.866 * R
+    middle: 100,   // Outer radius R
+    coxia: 52,     // Matches physical COXA_LENGTH_MM
+    femur: 66,     // Matches physical FEMUR_LENGTH_MM
+    tibia: 132,    // Matches physical TIBIA_LENGTH_MM
 }
+
 
 const DEFAULT_POSE = {
     leftFront: { alpha: 0, beta: 0, gamma: 0 },

@@ -1,3 +1,5 @@
+// web-ui/src/hexapod/constants.js
+
 const LEG_POINT_TYPES_LIST = [
     "bodyContactPoint",
     "coxiaPoint",
@@ -31,41 +33,14 @@ const MAX_ANGLES = {
     gamma: 180,
 }
 
-/*
-
-   hexapodYaxis
-       ^
-       |
-       |
-       *-----> hexapodXaxis
-      / (cog)
-     /
-  hexapodZaxis
-
-  Relative x-axis, for each attached linkage
-
-  (+135)  x2          x1 (+45)
-           \   head  /
-            *---*---*
-           /    |    \
-          /     |     \
- (+180)  /      |      \
-   x3 --*------cog------*-- x0 (+0)
-         \      |      /
-          \     |     /
-           \    |    /
-            *---*---*
-           /         \
-         x4           x5
-      (+225)        (+315)
- */
-const DEFAULT_DIMENSIONS = {
-    front: 50,    // Scaled to match 0.5 * R
-    side: 86.6,   // Scaled to match 0.866 * R
-    middle: 100,  // The outer radius R of the center chassis
-    coxia: 52,    // Matches COXA_LENGTH_MM
-    femur: 66,    // Matches FEMUR_LENGTH_MM
-    tibia: 132,   // Matches TIBIA_LENGTH_MM
+// Configured for regular 60-degree hexagonal corner mounting splay angles
+const POSITION_NAME_TO_AXIS_ANGLE_MAP = {
+    rightMiddle: 0,
+    rightFront: 60,
+    leftFront: 120,
+    leftMiddle: 180,
+    leftBack: 240,
+    rightBack: 300,
 }
 
 const POSITION_NAME_TO_IS_LEFT_MAP = {

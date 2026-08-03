@@ -2,6 +2,8 @@ import React, { Component } from "react"
 import { sliderList, Card, ResetButton } from "../generic"
 import { DEFAULT_POSE, DEFAULT_PATTERN_PARAMS } from "../../templates"
 import { SECTION_NAMES, ANGLE_NAMES } from "../vars"
+import { buildServoBatchPayload } from "../../utils/servoMapper"
+
 
 class LegPatternPage extends Component {
     pageName = SECTION_NAMES.legPatterns
@@ -27,8 +29,13 @@ class LegPatternPage extends Component {
 
         this.props.onUpdate("pose", { pose: newPose })
         this.setState({ patternParams })
-    }
 
+        if (this.props.publishThrottled) {
+            const batchPayload = buildServoBatchPayload(newPose)
+            this.props.publishThrottled("hexapod/cmd", batchPayload)
+        }
+    }
+    
     get sliders() {
         return sliderList({
             names: ANGLE_NAMES,

@@ -1,5 +1,6 @@
 import React, { Component } from "react"
 import LegPoseWidget from "../pagePartials/LegPoseWidgets"
+import { buildServoBatchPayload } from "../../utils/servoMapper"
 import { Card, ToggleSwitch, ResetButton, NumberInputField, Slider } from "../generic"
 import { DEFAULT_POSE } from "../../templates"
 import { SECTION_NAMES, LEG_NAMES } from "../vars"
@@ -19,6 +20,11 @@ class ForwardKinematicsPage extends Component {
             [name]: { ...pose[name], [angle]: value },
         }
         this.props.onUpdate("pose", { pose: newPose })
+
+        if (this.props.publishThrottled) {
+            const batchPayload = buildServoBatchPayload(newPose)
+            this.props.publishThrottled("hexapod/cmd", batchPayload)
+        }
     }
 
     toggleMode = () => {
