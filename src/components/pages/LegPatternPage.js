@@ -1,7 +1,7 @@
 import React, { Component } from "react"
 import { sliderList, Card, ResetButton } from "../generic"
 import { DEFAULT_POSE, DEFAULT_PATTERN_PARAMS } from "../../templates"
-import { SECTION_NAMES, ANGLE_NAMES } from "../vars"
+import { SECTION_NAMES, ANGLE_NAMES, RANGE_PARAMS } from "../vars"
 import { buildServoBatchPayload } from "../../utils/servoMapper"
 
 
@@ -35,12 +35,13 @@ class LegPatternPage extends Component {
             this.props.publishThrottled("hexapod/cmd", batchPayload)
         }
     }
-    
+
     get sliders() {
         return sliderList({
             names: ANGLE_NAMES,
             values: this.state.patternParams,
             handleChange: this.updatePatternPose,
+            rangeParams: RANGE_PARAMS,
         })
     }
 

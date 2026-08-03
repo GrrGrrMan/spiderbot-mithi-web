@@ -9,9 +9,14 @@ class InputField extends Component {
     }
 
     componentDidMount() {
-        this.setState({ message: null })
-    }
-
+            this.setState({ message: null })
+        }
+        componentDidUpdate(prevProps) {
+            if (prevProps.value !== this.props.value) {
+                this.setState({ message: null })
+            }
+        }
+        
     handleChange(value) {
         const { minVal, maxVal, stepVal } = this.props.rangeParams
         const validity = this.myRef.current.validity

@@ -3,12 +3,15 @@ import NumberInputField from "./generic/NumberInputField"
 import { Card, ResetButton, ToggleSwitch } from "./generic/SmallWidgets"
 import { DEFAULT_DIMENSIONS } from "../templates"
 import { SECTION_NAMES, DIMENSION_NAMES, RANGE_PARAMS } from "./vars"
+import { UPDATE_TYPES } from "../AppHelpers"
+
+
 
 class DimensionsWidget extends Component {
     sectionName = SECTION_NAMES.dimensions
     state = { isFine: true }
 
-    reset = () => this.props.onUpdate("dimensions", { dimensions: DEFAULT_DIMENSIONS })
+    reset = () => this.props.onUpdate(UPDATE_TYPES.DIMENSIONS, { dimensions: DEFAULT_DIMENSIONS })
 
     toggleMode = () => this.setState({ isFine: !this.state.isFine })
 
@@ -16,7 +19,7 @@ class DimensionsWidget extends Component {
 
     updateDimensions = (name, value) => {
         const dimensions = { ...this.props.params.dimensions, [name]: value }
-        this.props.onUpdate("dimensions", { dimensions })
+        this.props.onUpdate(UPDATE_TYPES.DIMENSIONS, { dimensions })
     }
 
     get toggleSwitch() {

@@ -20,6 +20,18 @@ const addVectors = (a, b) => new Vector(a.x + b.x, a.y + b.y, a.z + b.z)
 
 const getUnitVector = v => scaleVector(v, 1 / vectorLength(v))
 
+const transformMethods = {
+    cloneTrotShift(transformMatrix, tx, ty, tz) {
+        return this._doTransform("cloneTrotShift", transformMatrix, tx, ty, tz)
+    },
+    cloneTrot(transformMatrix) {
+        return this._doTransform("cloneTrot", transformMatrix)
+    },
+    cloneShift(tx, ty, tz) {
+        return this._doTransform("cloneShift", tx, ty, tz)
+    },
+}
+
 const cross = (a, b) => {
     const x = a.y * b.z - a.z * b.y
     const y = a.z * b.x - a.x * b.z
@@ -192,6 +204,7 @@ const matrixToAlignVectorAtoB = (a, b) => {
 }
 
 export {
+    transformMethods,
     degrees,
     radians,
     isTriangle,

@@ -1,5 +1,4 @@
 import React from "react"
-import { RANGE_PARAMS } from "../vars"
 /* *
  *
  * ................
@@ -34,7 +33,7 @@ const sliderList = ({ names, values, handleChange, rangeParams }) =>
         <Slider
             key={name}
             name={name}
-            rangeParams={rangeParams ? rangeParams[name] : RANGE_PARAMS[name]}
+            rangeParams={rangeParams[name]}
             handleChange={handleChange}
             value={values[name]}
         />

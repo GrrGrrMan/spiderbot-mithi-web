@@ -1,4 +1,4 @@
-import { DATA, SCENE, LAYOUT, CAMERA_VIEW } from "./"
+import { DATA, SCENE, LAYOUT, CAMERA_VIEW, DATA_INDEX_MAP } from "./"
 
 const _getSumOfDimensions = dimensions =>
     Object.values(dimensions).reduce((sum, dimension) => sum + dimension, 0)
@@ -12,49 +12,49 @@ const _drawHexapod = hexapod => {
     const { cogProjection, legs, groundContactPoints } = hexapod
 
     const dBodyMesh = {
-        ...DATA[0],
+        ...DATA[DATA_INDEX_MAP.bodyMesh],
         x: bodyX,
         y: bodyY,
         z: bodyZ,
     }
 
     const dBodyOutline = {
-        ...DATA[1],
+        ...DATA[DATA_INDEX_MAP.bodyOutline],
         x: bodyX,
         y: bodyY,
         z: bodyZ,
     }
 
     const dHead = {
-        ...DATA[2],
+        ...DATA[DATA_INDEX_MAP.head],
         x: [head.x],
         y: [head.y],
         z: [head.z],
     }
 
     const dCog = {
-        ...DATA[3],
+        ...DATA[DATA_INDEX_MAP.centerOfGravity],
         x: [cog.x],
         y: [cog.y],
         z: [cog.z],
     }
 
     const dCogProjection = {
-        ...DATA[4],
+        ...DATA[DATA_INDEX_MAP.centerOfGravityProjection],
         x: [cogProjection.x],
         y: [cogProjection.y],
         z: [cogProjection.z],
     }
 
-    const dLegs = legs.map((leg, index) => ({
-        ...DATA[index + 5],
+    const dLegs = legs.map(leg => ({
+        ...DATA[DATA_INDEX_MAP[leg.name]],
         x: leg.allPointsList.map(point => point.x),
         y: leg.allPointsList.map(point => point.y),
         z: leg.allPointsList.map(point => point.z),
     }))
 
     const dSupportPolygon = {
-        ...DATA[11],
+        ...DATA[DATA_INDEX_MAP.supportPolygonMesh],
         x: groundContactPoints.map(point => point.x),
         y: groundContactPoints.map(point => point.y),
         z: groundContactPoints.map(point => point.z),
@@ -63,38 +63,38 @@ const _drawHexapod = hexapod => {
     const axisScale = hexapod.body.dimensions.front / 2
     const { xAxis, yAxis, zAxis } = hexapod.localAxes
     const hXaxis = {
-        ...DATA[12],
+        ...DATA[DATA_INDEX_MAP.hexapodXaxis],
         x: [cog.x, cog.x + axisScale * xAxis.x],
         y: [cog.y, cog.y + axisScale * xAxis.y],
         z: [cog.z, cog.z + axisScale * xAxis.z],
     }
 
     const hYaxis = {
-        ...DATA[13],
+        ...DATA[DATA_INDEX_MAP.hexapodYaxis],
         x: [cog.x, cog.x + axisScale * yAxis.x],
         y: [cog.y, cog.y + axisScale * yAxis.y],
         z: [cog.z, cog.z + axisScale * yAxis.z],
     }
 
     const hZaxis = {
-        ...DATA[14],
+        ...DATA[DATA_INDEX_MAP.hexapodZaxis],
         x: [cog.x, cog.x + axisScale * zAxis.x],
         y: [cog.y, cog.y + axisScale * zAxis.y],
         z: [cog.z, cog.z + axisScale * zAxis.z],
     }
 
     const wXaxis = {
-        ...DATA[15],
+        ...DATA[DATA_INDEX_MAP.worldXaxis],
         x: [0, axisScale],
     }
 
     const wYaxis = {
-        ...DATA[16],
+        ...DATA[DATA_INDEX_MAP.worldYaxis],
         y: [0, axisScale],
     }
 
     const wZaxis = {
-        ...DATA[17],
+        ...DATA[DATA_INDEX_MAP.worldZaxis],
         z: [0, axisScale],
     }
 

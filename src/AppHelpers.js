@@ -11,6 +11,13 @@ import {
     LandingPage,
 } from "./components/pages"
 
+const UPDATE_TYPES = {
+    DEFAULT: "default",
+    POSE: "pose",
+    DIMENSIONS: "dimensions",
+    HEXAPOD: "hexapod",
+}
+
 const Page = ({ pageComponent }) => (
     <Switch>
         <Route path="/" exact>
@@ -35,30 +42,32 @@ const Page = ({ pageComponent }) => (
 )
 
 const updateHexapod = (updateType, newParam, oldHexapod) => {
-    if (updateType === "default") {
-        return new VirtualHexapod(defaults.DEFAULT_DIMENSIONS, defaults.DEFAULT_POSE)
+    const type = typeof updateType === "object" ? updateType.type : updateType
+    const payload = typeof updateType === "object" ? updateType.payload : newParam
+
+    switch (type) {
+        case UPDATE_TYPES.DEFAULT:
+            return new VirtualHexapod(defaults.DEFAULT_DIMENSIONS, defaults.DEFAULT_POSE)
+
+        case UPDATE_TYPES.POSE: {
+            const hexapod = new VirtualHexapod(oldHexapod.dimensions, payload.pose)
+            return hexapod && hexapod.foundSolution ? hexapod : oldHexapod
+        }
+
+        case UPDATE_TYPES.DIMENSIONS: {
+            const hexapod = new VirtualHexapod(payload.dimensions, oldHexapod.pose)
+            return hexapod && hexapod.foundSolution ? hexapod : oldHexapod
+        }
+
+        case UPDATE_TYPES.HEXAPOD: {
+            const hexapod = payload.hexapod
+            return hexapod && hexapod.foundSolution ? hexapod : oldHexapod
+        }
+
+        default:
+            console.warn(`[updateHexapod] Unrecognized action type: "${type}"`)
+            return oldHexapod
     }
-
-    let hexapod = null
-    const { pose, dimensions } = oldHexapod
-
-    if (updateType === "pose") {
-        hexapod = new VirtualHexapod(dimensions, newParam.pose)
-    }
-
-    if (updateType === "dimensions") {
-        hexapod = new VirtualHexapod(newParam.dimensions, pose)
-    }
-
-    if (updateType === "hexapod") {
-        hexapod = newParam.hexapod
-    }
-
-    if (!hexapod || !hexapod.foundSolution) {
-        return oldHexapod
-    }
-
-    return hexapod
 }
 
-export { Page, updateHexapod }
+export { Page, updateHexapod, UPDATE_TYPES }
