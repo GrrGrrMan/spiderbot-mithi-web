@@ -35,8 +35,21 @@ class InverseKinematicsPage extends Component {
         }
 
         this.updateHexapodPlot(result.hexapod, ikParams)
-    }
 
+        if (this.props.publishThrottled) {
+            this.props.publishThrottled("hexapod/cmd", {
+                type: "motion",
+                pos_x: ikParams.ty * 100.0,  // Web +Y translation -> FW +X
+                pos_y: -ikParams.tx * 100.0, // Web +X translation -> FW -Y
+                pos_z: ikParams.tz * 100.0,  // Height offset
+                roll: ikParams.rx,
+                pitch: ikParams.ry,
+                yaw: ikParams.rz,
+                leg_stance: ikParams.legStance,
+                hip_stance: ikParams.hipStance
+            })
+        }
+    }
     get sliders() {
         return sliderList({
             names: IK_SLIDERS_LABELS,

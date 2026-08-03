@@ -45,6 +45,32 @@ class WalkingGaitsPage extends Component {
         animationCount: 0,
     }
 
+    sendMotionCommand = (gaitParams, isTripodGait, inWalkMode, isForward, isAnimating) => {
+        const publisher = this.props.publishImmediate || this.props.publishThrottled
+        if (!publisher) return
+
+        const direction = isForward ? 1.0 : -1.0
+
+        const vx = (isAnimating && inWalkMode) ? (gaitParams.hipSwing * 2.0 * direction) : 0.0
+        const vy = 0.0
+        const omega = (isAnimating && !inWalkMode) ? (gaitParams.hipSwing * 2.0 * direction) : 0.0
+
+        publisher("hexapod/cmd", {
+            type: "motion",
+            gait: isTripodGait ? "tripod" : "ripple",
+            vx: vx,
+            vy: vy,
+            omega: omega,
+            step_height: gaitParams.liftSwing,
+            leg_stance: gaitParams.legStance,
+            hip_stance: gaitParams.hipStance,
+            // Include body posture shift & tilt offsets while walking
+            pos_x: gaitParams.tx * 100.0,
+            pos_z: gaitParams.tz * 100.0,
+            roll: gaitParams.rx,
+            pitch: gaitParams.ry
+        })
+    }
     componentDidMount = () => {
         this.props.onMount(this.pageName)
         const { isTripodGait, inWalkMode } = this.state
@@ -112,32 +138,42 @@ class WalkingGaitsPage extends Component {
     }
 
     reset = () => {
-        const { isTripodGait, inWalkMode } = this.state
+        const { isTripodGait, inWalkMode, isForward, isAnimating } = this.state
         this.currentTwist = 0
         this.setWalkSequence(DEFAULT_GAIT_PARAMS, isTripodGait, inWalkMode)
+        this.sendMotionCommand(DEFAULT_GAIT_PARAMS, isTripodGait, inWalkMode, isForward, isAnimating)
     }
 
+
     updateGaitParams = (name, value) => {
-        const { isTripodGait, inWalkMode } = this.state
+        const { isTripodGait, inWalkMode, isForward, isAnimating } = this.state
         const gaitParams = { ...this.state.gaitParams, [name]: value }
         this.setWalkSequence(gaitParams, isTripodGait, inWalkMode)
+        this.sendMotionCommand(gaitParams, isTripodGait, inWalkMode, isForward, isAnimating)
     }
 
     toggleWalkMode = () => {
-        const { gaitParams, isTripodGait } = this.state
+        const { gaitParams, isTripodGait, isForward, isAnimating } = this.state
         const inWalkMode = !this.state.inWalkMode
         this.setWalkSequence(gaitParams, isTripodGait, inWalkMode)
+        this.sendMotionCommand(gaitParams, isTripodGait, inWalkMode, isForward, isAnimating)
     }
 
     toggleGaitType = () => {
-        const { gaitParams, inWalkMode } = this.state
+        const { gaitParams, inWalkMode, isForward, isAnimating } = this.state
         const isTripodGait = !this.state.isTripodGait
         this.setWalkSequence(gaitParams, isTripodGait, inWalkMode)
+        this.sendMotionCommand(gaitParams, isTripodGait, inWalkMode, isForward, isAnimating)
     }
 
     toggleWidgets = () => this.setState({ showGaitWidgets: !this.state.showGaitWidgets })
 
-    toggleDirection = () => this.setState({ isForward: !this.state.isForward })
+    toggleDirection = () => {
+        const { gaitParams, isTripodGait, inWalkMode, isAnimating } = this.state
+        const isForward = !this.state.isForward
+        this.setState({ isForward })
+        this.sendMotionCommand(gaitParams, isTripodGait, inWalkMode, isForward, isAnimating)
+    }
 
     toggleAnimating = () => {
         const isAnimating = !this.state.isAnimating
@@ -148,6 +184,9 @@ class WalkingGaitsPage extends Component {
         } else {
             clearInterval(this.intervalID)
         }
+
+        const { gaitParams, isTripodGait, inWalkMode, isForward } = this.state
+        this.sendMotionCommand(gaitParams, isTripodGait, inWalkMode, isForward, isAnimating)
     }
 
     get widgetsSwitch() {

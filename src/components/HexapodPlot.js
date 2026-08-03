@@ -8,6 +8,14 @@ class HexapodPlot extends React.Component {
     state = { ready: false }
     Plot = null
 
+    shouldComponentUpdate(nextProps, nextState) {
+        return (
+            nextProps.revision !== this.props.revision ||
+            nextProps.hexapod !== this.props.hexapod ||
+            nextState.ready !== this.state.ready
+        )
+    }
+
     logCameraView = relayoutData => {
         this.cameraView = relayoutData["scene.camera"]
     }
@@ -34,7 +42,7 @@ class HexapodPlot extends React.Component {
             layout,
             onRelayout: this.logCameraView,
             revision: this.props.revision,
-            config: { displaylogo: false, responsive: true },
+            config: { displaylogo: false, responsive: true, scrollZoom: true },
             style: { height: "100%", width: "100%" },
             useResizeHandler: true,
         }

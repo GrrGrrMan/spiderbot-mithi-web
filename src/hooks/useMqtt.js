@@ -22,6 +22,13 @@ const getBrokerUrl = () => {
     return `ws://${hostname}:9001`
 }
 
+const resolveTopic = (topic, deviceId) => {
+    if (!topic || topic === "hexapod/cmd") {
+        return `hexapod/${deviceId}/cmd`
+    }
+    return topic
+}
+
 export function useMqtt(brokerUrlOverride = null, deviceId = "hexapod-cam-01") {
     const [isConnected, setIsConnected] = useState(false)
     const [telemetry, setTelemetry] = useState(null)
@@ -84,17 +91,21 @@ export function useMqtt(brokerUrlOverride = null, deviceId = "hexapod-cam-01") {
 
     const publishThrottled = useCallback((topic, payload) => {
         if (!clientRef.current || !isConnected) return
+        const targetTopic = resolveTopic(topic, deviceId)
         const now = Date.now()
         if (now - lastPublishRef.current >= 100) { // 100ms = 10Hz
-            clientRef.current.publish(topic, JSON.stringify(payload))
+            clientRef.current.publish(targetTopic, JSON.stringify(payload))
             lastPublishRef.current = now
+            console.log(`[MQTT WebUI] Throttled Publish -> [${targetTopic}]:`, payload)
         }
-    }, [isConnected])
+    }, [isConnected, deviceId])
 
     const publishImmediate = useCallback((topic, payload) => {
         if (!clientRef.current || !isConnected) return
-        clientRef.current.publish(topic, JSON.stringify(payload))
-    }, [isConnected])
+        const targetTopic = resolveTopic(topic, deviceId)
+        clientRef.current.publish(targetTopic, JSON.stringify(payload))
+        console.log(`[MQTT WebUI] Immediate Publish -> [${targetTopic}]:`, payload)
+    }, [isConnected, deviceId])
 
     return { isConnected, telemetry, logs, config, publishThrottled, publishImmediate }
 }
