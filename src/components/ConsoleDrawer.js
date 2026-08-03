@@ -1,10 +1,10 @@
-// web-ui/src/components/ConsoleDrawer.js
-// Replace ConsoleDrawer.js in web-ui/src/components/ConsoleDrawer.js
 import React, { useState, useEffect, useRef } from "react"
 
 const ConsoleDrawer = ({ isConnected, logs, publishImmediate }) => {
     const [isExpanded, setIsExpanded] = useState(true)
     const [cmdText, setCmdText] = useState("")
+    const [isAwake, setIsAwake] = useState(true)
+    const [logOffset, setLogOffset] = useState(0)
     const terminalRef = useRef(null)
 
     // Auto-scroll ONLY the inner log terminal container without moving the browser page
@@ -32,6 +32,14 @@ const ConsoleDrawer = ({ isConnected, logs, publishImmediate }) => {
         console.log("[ConsoleDrawer] Macro Triggered:", fullPayload)
         publishImmediate("hexapod/cmd", fullPayload)
     }
+
+    const handlePowerToggle = () => {
+        const newState = !isAwake
+        setIsAwake(newState)
+        handleMacro("system", { power: newState })
+    }
+
+    const visibleLogs = logs.slice(logOffset)
 
     return (
         <div 
@@ -87,6 +95,22 @@ const ConsoleDrawer = ({ isConnected, logs, publishImmediate }) => {
                             <button type="button" className="button border" onClick={() => handleMacro("system", { logging: false })} style={{ padding: "8px", cursor: "pointer" }}>
                                 Disable Logs
                             </button>
+                            
+                            <button 
+                                type="button" 
+                                className="button border" 
+                                onClick={handlePowerToggle} 
+                                style={{ 
+                                    padding: "8px", 
+                                    cursor: "pointer",
+                                    backgroundColor: isAwake ? "var(--c0-dark-grey)" : "var(--c6-red)",
+                                    color: isAwake ? "var(--c2-pink)" : "var(--c0-dark-grey)",
+                                    borderColor: isAwake ? "var(--c4-blue)" : "var(--c6-red)"
+                                }}
+                            >
+                                {isAwake ? "Relax (Limp)" : "Wake (Torque)"}
+                            </button>
+
                             <button type="button" className="button border" onClick={() => handleMacro("system", { command: "reboot" })} style={{ padding: "8px", cursor: "pointer" }}>
                                 Reboot ESP32
                             </button>
@@ -97,9 +121,19 @@ const ConsoleDrawer = ({ isConnected, logs, publishImmediate }) => {
                     </div>
 
                     <div style={{ flex: 2, minWidth: "400px" }}>
-                        <label className="label" style={{ display: "block", marginBottom: "5px" }}>
-                            Remote System Log Output:
-                        </label>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "5px" }}>
+                            <label className="label" style={{ margin: 0, width: "auto" }}>
+                                Remote System Log Output:
+                            </label>
+                            <button 
+                                type="button" 
+                                className="button" 
+                                onClick={() => setLogOffset(logs.length)}
+                                style={{ padding: "2px 8px", border: "1px solid var(--c4-blue)", borderRadius: "4px", fontSize: "0.65rem", cursor: "pointer" }}
+                            >
+                                Clear Terminal
+                            </button>
+                        </div>
                         <div 
                             ref={terminalRef}
                             style={{ 
@@ -114,10 +148,10 @@ const ConsoleDrawer = ({ isConnected, logs, publishImmediate }) => {
                                 border: "1px solid var(--c4-blue)"
                             }}
                         >
-                            {logs.length === 0 ? (
+                            {visibleLogs.length === 0 ? (
                                 <span style={{ opacity: 0.5 }}>Waiting for system logs... Click "Enable Logs" macro above.</span>
                             ) : (
-                                logs.map((log, i) => (
+                                visibleLogs.map((log, i) => (
                                     <div key={i} style={{ whiteSpace: "pre-wrap", marginBottom: "4px" }}>
                                         {log}
                                     </div>
