@@ -3,6 +3,7 @@ import { sliderList, Card, ResetButton } from "../generic"
 import { DEFAULT_POSE, DEFAULT_PATTERN_PARAMS } from "../../templates"
 import { SECTION_NAMES, ANGLE_NAMES, RANGE_PARAMS } from "../vars"
 import { buildServoBatchPayload } from "../../utils/servoMapper"
+import { UPDATE_TYPES } from "../../AppHelpers"
 
 
 class LegPatternPage extends Component {
@@ -15,9 +16,19 @@ class LegPatternPage extends Component {
     }
 
     reset = () => {
-        this.props.onUpdate("pose", { pose: DEFAULT_POSE })
-        this.setState({ patternParams: DEFAULT_PATTERN_PARAMS })
-    }
+            let defaultPose = {}
+            for (const leg in DEFAULT_POSE) {
+                defaultPose[leg] = DEFAULT_PATTERN_PARAMS
+            }
+
+            this.props.onUpdate(UPDATE_TYPES.POSE, { pose: defaultPose })
+            this.setState({ patternParams: DEFAULT_PATTERN_PARAMS })
+
+            if (this.props.publishThrottled) {
+                const batchPayload = buildServoBatchPayload(defaultPose)
+                this.props.publishThrottled("hexapod/cmd", batchPayload)
+            }
+        }
 
     updatePatternPose = (name, value) => {
         const patternParams = { ...this.state.patternParams, [name]: Number(value) }

@@ -1,4 +1,5 @@
 import React, { Component } from "react"
+import { UPDATE_TYPES } from "../../AppHelpers"
 import LegPoseWidget from "../pagePartials/LegPoseWidgets"
 import { buildServoBatchPayload } from "../../utils/servoMapper"
 import { Card, ToggleSwitch, ResetButton, NumberInputField, Slider } from "../generic"
@@ -11,7 +12,15 @@ class ForwardKinematicsPage extends Component {
 
     componentDidMount = () => this.props.onMount(this.pageName)
 
-    reset = () => this.props.onUpdate("pose", { pose: DEFAULT_POSE })
+    reset = () => {
+            this.props.onUpdate(UPDATE_TYPES.POSE, { pose: DEFAULT_POSE })
+            this.setState({ pose: DEFAULT_POSE })
+
+            if (this.props.publishThrottled) {
+                const batchPayload = buildServoBatchPayload(DEFAULT_POSE)
+                this.props.publishThrottled("hexapod/cmd", batchPayload)
+            }
+        }
 
     updatePose = (name, angle, value) => {
         const pose = this.props.params.pose
