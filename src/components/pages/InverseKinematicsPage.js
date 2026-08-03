@@ -1,9 +1,12 @@
 import React, { Component } from "react"
 import { sliderList, Card, ResetButton, AlertBox } from "../generic"
 import { solveInverseKinematics } from "../../hexapod"
-import { SECTION_NAMES, RANGE_PARAMS, IK_SLIDERS_LABELS } from "../vars"
-import { DEFAULT_IK_PARAMS } from "../../templates"
+import { SECTION_NAMES, IK_SLIDERS_LABELS, RANGE_PARAMS } from "../vars"
+import { DEFAULT_POSE, DEFAULT_IK_PARAMS } from "../../templates"
 import PoseTable from "../pagePartials/PoseTable"
+import { UPDATE_TYPES } from "../../AppHelpers"
+import { buildServoBatchPayload } from "../../utils/servoMapper"
+
 
 
 class InverseKinematicsPage extends Component {
@@ -13,12 +16,14 @@ class InverseKinematicsPage extends Component {
     componentDidMount = () => this.props.onMount(this.pageName)
 
     reset = () => {
-        const result = solveInverseKinematics(
-            this.props.params.dimensions,
-            DEFAULT_IK_PARAMS
-        )
-        this.updateHexapodPlot(result.hexapod, DEFAULT_IK_PARAMS)
-    }
+            this.props.onUpdate(UPDATE_TYPES.POSE, { pose: DEFAULT_POSE })
+            this.setState({ ikParams: DEFAULT_IK_PARAMS })
+
+            if (this.props.publishThrottled) {
+                const batchPayload = buildServoBatchPayload(DEFAULT_POSE)
+                this.props.publishThrottled("hexapod/cmd", batchPayload)
+            }
+        }
 
     updateHexapodPlot = (hexapod, ikParams) => {
         this.setState({ ikParams, errorMessage: null })

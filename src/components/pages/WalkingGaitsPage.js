@@ -5,7 +5,7 @@ import getWalkSequence from "../../hexapod/solvers/walkSequenceSolver"
 import PoseTable from "../pagePartials/PoseTable"
 import { VirtualHexapod } from "../../hexapod"
 import { tRotZmatrix } from "../../hexapod/geometry"
-import { DEFAULT_GAIT_PARAMS } from "../../templates"
+import { DEFAULT_GAIT_PARAMS, DEFAULT_MOTION_COMMAND } from "../../templates"
 
 const ANIMATION_DELAY = 25
 
@@ -138,12 +138,12 @@ class WalkingGaitsPage extends Component {
     }
 
     reset = () => {
-        const { isTripodGait, inWalkMode, isForward, isAnimating } = this.state
-        this.currentTwist = 0
-        this.setWalkSequence(DEFAULT_GAIT_PARAMS, isTripodGait, inWalkMode)
-        this.sendMotionCommand(DEFAULT_GAIT_PARAMS, isTripodGait, inWalkMode, isForward, isAnimating)
-    }
+            this.setState({ gaitParams: DEFAULT_GAIT_PARAMS })
 
+            if (this.props.publishThrottled) {
+                this.props.publishThrottled("hexapod/cmd", DEFAULT_MOTION_COMMAND)
+            }
+        }
 
     updateGaitParams = (name, value) => {
         const { isTripodGait, inWalkMode, isForward, isAnimating } = this.state

@@ -47,12 +47,32 @@ const DEFAULT_GAIT_PARAMS = {
     stepCount: 5,
 }
 
+
+const DEFAULT_MOTION_COMMAND = {
+    type: "motion",
+    gait: "tripod",
+    vx: 0,
+    vy: 0,
+    omega: 0,
+    step_height: DEFAULT_GAIT_PARAMS.liftSwing,
+    cycle_time: 1.0,
+    leg_stance: DEFAULT_GAIT_PARAMS.legStance,
+    hip_stance: DEFAULT_GAIT_PARAMS.hipStance,
+    pos_x: DEFAULT_GAIT_PARAMS.tx,
+    pos_y: 0,
+    pos_z: DEFAULT_GAIT_PARAMS.tz,
+    roll: DEFAULT_GAIT_PARAMS.rx,
+    pitch: DEFAULT_GAIT_PARAMS.ry,
+    yaw: 0,
+}
+
 export {
     DEFAULT_DIMENSIONS,
     DEFAULT_LEG_DIMENSIONS,
     DEFAULT_BODY_DIMENSIONS,
     DEFAULT_POSE,
-    DEFAULT_IK_PARAMS,
     DEFAULT_PATTERN_PARAMS,
     DEFAULT_GAIT_PARAMS,
+    DEFAULT_MOTION_COMMAND,
+    DEFAULT_IK_PARAMS,
 }
