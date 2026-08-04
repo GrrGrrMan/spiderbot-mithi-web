@@ -56,6 +56,7 @@ class ForwardKinematicsPage extends Component {
         const props = {
             id: "FwdKinematicsSwitch",
             value: this.state.WidgetType === Slider ? "Slide" : "Input",
+            checked: this.state.WidgetType === Slider,
             handleChange: this.toggleMode,
             showValue: true,
         }

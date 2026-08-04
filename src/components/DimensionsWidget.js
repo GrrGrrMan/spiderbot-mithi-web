@@ -26,6 +26,7 @@ class DimensionsWidget extends Component {
         const props = {
             id: "DimensionsWidgetSwitch",
             value: this.state.isFine ? "1x" : "5x",
+            checked: this.state.isFine,
             handleChange: this.toggleMode,
             showValue: true,
         }

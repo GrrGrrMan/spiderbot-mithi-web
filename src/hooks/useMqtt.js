@@ -29,13 +29,25 @@ const resolveTopic = (topic, deviceId) => {
     return topic
 }
 
-export function useMqtt(brokerUrlOverride = null, deviceId = "hexapod-cam-01") {
+const getDeviceId = (defaultId = "hexapod-cam-01") => {
+    const params = new URLSearchParams(window.location.search)
+    const queryDevice = params.get("device")
+    return queryDevice || defaultId
+}
+
+export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
+    const deviceId = deviceIdOverride || getDeviceId()
+    const [isConnected, setIsConnected] = useState(false)
     const [isConnected, setIsConnected] = useState(false)
     const [telemetry, setTelemetry] = useState(null)
     const [logs, setLogs] = useState([])
     const [config, setConfig] = useState(null)
     const clientRef = useRef(null)
     const lastPublishRef = useRef(0)
+    const clearLogs = useCallback(() => {
+        setLogs([])
+    }, [])
+
 
     useEffect(() => {
         const resolvedUrl = brokerUrlOverride || getBrokerUrl()
@@ -127,5 +139,5 @@ export function useMqtt(brokerUrlOverride = null, deviceId = "hexapod-cam-01") {
         console.log(`[MQTT WebUI] Immediate Publish -> [${targetTopic}]:`, payload)
     }, [isConnected, deviceId])
 
-    return { isConnected, telemetry, logs, config, publishThrottled, publishImmediate }
+    return { isConnected, telemetry, logs, config, publishThrottled, publishImmediate, clearLogs }
 }

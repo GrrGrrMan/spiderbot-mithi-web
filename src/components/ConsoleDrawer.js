@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef } from "react"
 
-const ConsoleDrawer = ({ isConnected, logs, publishImmediate }) => {
+const ConsoleDrawer = ({ isConnected, logs, publishImmediate, clearLogs, telemetry }) => {
     const [isExpanded, setIsExpanded] = useState(true)
     const [cmdText, setCmdText] = useState("")
-    const [isAwake, setIsAwake] = useState(true)
-    const [logOffset, setLogOffset] = useState(0)
     const terminalRef = useRef(null)
+    const [localIsAwake, setLocalIsAwake] = useState(true)
 
     // Auto-scroll ONLY the inner log terminal container without moving the browser page
     useEffect(() => {
@@ -13,6 +12,16 @@ const ConsoleDrawer = ({ isConnected, logs, publishImmediate }) => {
             terminalRef.current.scrollTop = terminalRef.current.scrollHeight
         }
     }, [logs, isExpanded])
+
+    const isAwake = (telemetry && telemetry.power !== undefined) 
+        ? telemetry.power 
+        : localIsAwake
+
+    const handlePowerToggle = () => {
+        const newState = !isAwake
+        setLocalIsAwake(newState)
+        handleMacro("system", { power: newState })
+    }
 
     const handleSendCmd = (e) => {
         e.preventDefault()
@@ -128,7 +137,7 @@ const ConsoleDrawer = ({ isConnected, logs, publishImmediate }) => {
                             <button 
                                 type="button" 
                                 className="button" 
-                                onClick={() => setLogOffset(logs.length)}
+                                onClick={clearLogs}
                                 style={{ padding: "2px 8px", border: "1px solid var(--c4-blue)", borderRadius: "4px", fontSize: "0.65rem", cursor: "pointer" }}
                             >
                                 Clear Terminal

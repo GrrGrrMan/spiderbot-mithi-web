@@ -65,7 +65,8 @@ class WalkingGaitsPage extends Component {
             leg_stance: gaitParams.legStance,
             hip_stance: gaitParams.hipStance,
             // Include body posture shift & tilt offsets while walking
-            pos_x: gaitParams.tx * 100.0,
+            pos_x: gaitParams.tx * 0,
+            pos_y: -gaitParams.tx * 100.0,
             pos_z: gaitParams.tz * 100.0,
             roll: gaitParams.rx,
             pitch: gaitParams.ry
@@ -138,12 +139,19 @@ class WalkingGaitsPage extends Component {
     }
 
     reset = () => {
-            this.setState({ gaitParams: DEFAULT_GAIT_PARAMS })
+        const { isTripodGait, inWalkMode } = this.state
 
-            if (this.props.publishThrottled) {
-                this.props.publishThrottled("hexapod/cmd", DEFAULT_MOTION_COMMAND)
-            }
+        // 1. Reset animation counter and parameter state
+        this.setState({ gaitParams: DEFAULT_GAIT_PARAMS, animationCount: 0 })
+
+        // 2. Re-compute gait sequence and update 3D Plotly visualizer
+        this.setWalkSequence(DEFAULT_GAIT_PARAMS, isTripodGait, inWalkMode)
+
+        // 3. Publish reset command to physical robot
+        if (this.props.publishThrottled) {
+            this.props.publishThrottled("hexapod/cmd", DEFAULT_MOTION_COMMAND)
         }
+    }
 
     updateGaitParams = (name, value) => {
         const { isTripodGait, inWalkMode, isForward, isAnimating } = this.state

@@ -10,16 +10,26 @@ const AlertBox = ({ info }) => (
     </div>
 )
 
-const ToggleSwitch = ({ id, value, handleChange, showValue }) => (
-    <div className="switch-container">
-        <label className="switch">
-            <input id={id} type="checkbox" value={value} onChange={handleChange} />
-            <span className="toggle-switch-widget round"></span>
-            <span style={{ opacity: 0 }}>{value}</span>
-        </label>
-        <label className="label">{showValue ? value : null}</label>
-    </div>
-)
+const ToggleSwitch = ({ id, value, handleChange, showValue, checked }) => {
+    // Use explicit `checked` prop if passed; otherwise check if `value` is boolean
+    const isChecked = checked !== undefined ? Boolean(checked) : (typeof value === "boolean" ? value : false)
+
+    return (
+        <div className="switch-container">
+            <label className="switch">
+                <input 
+                    id={id} 
+                    type="checkbox" 
+                    checked={isChecked} 
+                    onChange={handleChange} 
+                />
+                <span className="toggle-switch-widget round"></span>
+                <span style={{ opacity: 0 }}>{String(value)}</span>
+            </label>
+            <label className="label">{showValue ? String(value) : null}</label>
+        </div>
+    )
+}
 
 const Card = ({ title, other, children }) => (
     <div>
