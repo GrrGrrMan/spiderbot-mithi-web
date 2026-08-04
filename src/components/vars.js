@@ -66,20 +66,20 @@ const RANGE_PARAMS = {
     rz: RANGES[60],
     legStance: RANGES[90],
     hipStance: RANGES[60],
-    alpha: RANGES[90],
-    beta: RANGES[180],
-    gamma: RANGES[180],
+    alpha: RANGES[30],
+    beta: RANGES[90],
+    gamma: RANGES[90],
 }
 
 const GAIT_RANGE_PARAMS = {
-    tx: { minVal: -0.25, maxVal: 0.25, stepVal: 0.01, defaultVal: 0 },
-    tz: { minVal: -0.5, maxVal: 0.5, stepVal: 0.01, defaultVal: 0 },
-    rx: { minVal: -15, maxVal: 15, stepVal: 0.5, defaultVal: 0 },
-    ry: { minVal: -15, maxVal: 15, stepVal: 0.5, defaultVal: 0 },
-    legStance: { minVal: -50, maxVal: 50, stepVal: 0.5, defaultVal: 0 },
-    hipStance: { minVal: 0, maxVal: 40, stepVal: 0.5, defaultVal: 20 },
-    hipSwing: { minVal: 10, maxVal: 40, stepVal: 0.5, defaultVal: 25 },
-    liftSwing: { minVal: 10, maxVal: 70, stepVal: 0.5, defaultVal: 40 },
+    tx: { minVal: -0.25, maxVal: 0.25, stepVal: 0.1, defaultVal: 0 },
+    tz: { minVal: -0.5, maxVal: 0.5, stepVal: 0.1, defaultVal: 0 },
+    rx: { minVal: -15, maxVal: 15, stepVal: 2.5, defaultVal: 0 },
+    ry: { minVal: -15, maxVal: 15, stepVal: 2.5, defaultVal: 0 },
+    legStance: { minVal: -50, maxVal: 50, stepVal: 1, defaultVal: 0 },
+    hipStance: { minVal: 0, maxVal: 40, stepVal: 1, defaultVal: 20 },
+    hipSwing: { minVal: 10, maxVal: 40, stepVal: 1, defaultVal: 25 },
+    liftSwing: { minVal: 10, maxVal: 70, stepVal: 1, defaultVal: 40 },
     stepCount: { minVal: 3, maxVal: 7, stepVal: 1, defaultVal: 5 },
 }
 /*************
