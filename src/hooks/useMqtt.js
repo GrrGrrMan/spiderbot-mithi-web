@@ -38,7 +38,6 @@ const getDeviceId = (defaultId = "hexapod-cam-01") => {
 export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
     const deviceId = deviceIdOverride || getDeviceId()
     const [isConnected, setIsConnected] = useState(false)
-    const [isConnected, setIsConnected] = useState(false)
     const [telemetry, setTelemetry] = useState(null)
     const [logs, setLogs] = useState([])
     const [config, setConfig] = useState(null)

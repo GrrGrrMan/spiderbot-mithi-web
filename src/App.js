@@ -17,7 +17,7 @@ function App() {
     const [hexapod, setHexapod] = useState(() => updateHexapod("default"))
     const [revision, setRevision] = useState(0)
 
-    const { isConnected, telemetry, logs, config, publishThrottled, publishImmediate } = useMqtt()
+    const { isConnected, telemetry, logs, config, publishThrottled, publishImmediate, clearLogs } = useMqtt()
 
     useEffect(() => {
         if (!config || !config.dimensions) return

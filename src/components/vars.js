@@ -2,8 +2,6 @@ import React from "react"
 import { GiCoffeeMug } from "react-icons/gi"
 import { FaGithubAlt, FaTimes, FaHome } from "react-icons/fa"
 import { GrStatusGoodSmall } from "react-icons/gr"
-import { POSITION_NAMES_LIST } from "../hexapod"
-
 
 const SECTION_NAMES = {
     dimensions: "Dimensions",
@@ -24,7 +22,16 @@ const PATH_NAMES = {
 
 const ANGLE_NAMES = ["alpha", "beta", "gamma"]
 const DIMENSION_NAMES = ["front", "side", "middle", "coxia", "femur", "tibia"]
-const LEG_NAMES = POSITION_NAMES_LIST
+
+// Manual layout for familiarity sake!
+const LEG_NAMES = [
+    "leftFront",
+    "rightFront",
+    "leftMiddle",
+    "rightMiddle",
+    "leftBack",
+    "rightBack",
+]
 
 const IK_SLIDERS_LABELS = ["tx", "ty", "tz", "rx", "ry", "rz", "hipStance", "legStance"]
 const RESET_LABEL = "reset"
