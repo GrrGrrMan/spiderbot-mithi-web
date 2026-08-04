@@ -6,13 +6,15 @@ const ConsoleDrawer = ({ isConnected, logs, publishImmediate, clearLogs, telemet
     const terminalRef = useRef(null)
     const [localIsAwake, setLocalIsAwake] = useState(true)
 
-    // Auto-scroll ONLY the inner log terminal container without moving the browser page
+    // Auto-scroll log terminal
     useEffect(() => {
         if (terminalRef.current) {
             terminalRef.current.scrollTop = terminalRef.current.scrollHeight
         }
     }, [logs, isExpanded])
 
+
+    // Derive active power state from live telemetry or local state
     const isAwake = (telemetry && telemetry.power !== undefined) 
         ? telemetry.power 
         : localIsAwake
@@ -42,13 +44,7 @@ const ConsoleDrawer = ({ isConnected, logs, publishImmediate, clearLogs, telemet
         publishImmediate("hexapod/cmd", fullPayload)
     }
 
-    const handlePowerToggle = () => {
-        const newState = !isAwake
-        setIsAwake(newState)
-        handleMacro("system", { power: newState })
-    }
-
-    const visibleLogs = logs.slice(logOffset)
+    const visibleLogs = logs
 
     return (
         <div 
