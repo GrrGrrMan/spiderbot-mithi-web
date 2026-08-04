@@ -128,9 +128,11 @@ function App() {
 
             {/* Place Console Drawer directly below the split viewport container */}
             <ConsoleDrawer 
+                telemetry={telemetry}
                 isConnected={isConnected} 
                 logs={logs} 
                 publishImmediate={publishImmediate} 
+                clearLogs={clearLogs}
             />
 
             {inHexapodPage ? <NavDetailed /> : null}

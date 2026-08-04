@@ -328,22 +328,12 @@ Example #2
 const computeAlpha = (coxiaVector, legXaxisAngle, xAxis, zAxis) => {
     const sign = isCounterClockwise(coxiaVector, xAxis, zAxis) ? -1 : 1
     const alphaWrtHexapod = sign * angleBetween(coxiaVector, xAxis)
-    const alpha = (alphaWrtHexapod - legXaxisAngle) % 360
+    let alpha = (alphaWrtHexapod - legXaxisAngle) % 360
 
-    if (alpha > 180) {
-        return alpha - 360
-    }
-    if (alpha < -180) {
-        return alpha + 360
-    }
+    if (alpha > 180)  alpha -= 360
+    if (alpha < -180) alpha += 360
 
-    // ❗❗❗THIS IS A HACK ❗❗❗
-    // THERE IS A BUG HERE SOMEWHERE, FIND IT
-    if (alpha === 180 || alpha === -180) {
-        return 0
-    }
-
-    return alpha
+    return alpha // Hack #1 Fixed - out-of-range angles handled by MAX_ANGLES check
 }
 
 export default IKSolver

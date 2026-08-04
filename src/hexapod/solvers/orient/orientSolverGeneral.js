@@ -105,6 +105,7 @@ const computeOrientationProperties = (legsNoGravity, flags = { shuffle: false })
             }
 
             const normal = getNormalofThreePoints(p0, p1, p2, "normalVector")
+            const EPSILON = 1e-4 // New math value
             const height = -dot(normal, p0)
 
             if (
@@ -117,11 +118,10 @@ const computeOrientationProperties = (legsNoGravity, flags = { shuffle: false })
                 continue
             }
 
-            // ❗❗❗THIS IS A HACK ❗❗❗
-            // THERE IS A BUG HERE SOMEWHERE, FIND IT
-            if (height === 0) {
+            // Fixed Hack #2 by using epsolon comparison
+            if (Math.abs(height) < EPSILON) {
                 if (fallback === null) {
-                    fallback = { p0, p1, p2, normal, height }
+                    fallback = { p0, p1, p2, normal, height: 0 }
                 }
                 continue
             }
