@@ -89,6 +89,26 @@ export function useMqtt(brokerUrlOverride = null, deviceId = "hexapod-cam-01") {
         }
     }, [brokerUrlOverride, deviceId])
 
+    useEffect(() => {
+        if (!isConnected || !clientRef.current) return
+
+        // Periodically publishes a lightweight heartbeat to reset the ESP32 safety watchdog
+        const heartbeatInterval = setInterval(() => {
+            const targetTopic = `hexapod/${deviceId}/cmd`
+            const payload = JSON.stringify({ type: "heartbeat" })
+            
+            try {
+                clientRef.current.publish(targetTopic, payload)
+            } catch (err) {
+                console.error("[MQTT WebUI] Heartbeat publish failed:", err)
+            }
+        }, 500) // 500ms intervals (twice as fast as the 1000ms watchdog timeout)
+
+        return () => {
+            clearInterval(heartbeatInterval)
+        }
+    }, [isConnected, deviceId])
+
     const publishThrottled = useCallback((topic, payload) => {
         if (!clientRef.current || !isConnected) return
         const targetTopic = resolveTopic(topic, deviceId)
