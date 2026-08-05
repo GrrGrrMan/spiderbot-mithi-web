@@ -46,7 +46,7 @@ class WalkingGaitsPage extends Component {
     }
 
     sendMotionCommand = (gaitParams, isTripodGait, inWalkMode, isForward, isAnimating) => {
-        const publisher = this.props.publishImmediate || this.props.publishThrottled
+        const publisher = this.props.publishThrottled
         if (!publisher) return
 
         const direction = isForward ? 1.0 : -1.0
