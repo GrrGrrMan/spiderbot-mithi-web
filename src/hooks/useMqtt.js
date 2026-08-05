@@ -43,6 +43,8 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
     const [config, setConfig] = useState(null)
     const clientRef = useRef(null)
     const lastPublishRef = useRef(0)
+    const pendingPublishRef = useRef(null)
+    const trailingTimerRef = useRef(null)
     const clearLogs = useCallback(() => {
         setLogs([])
     }, [])
@@ -120,14 +122,42 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         }
     }, [isConnected, deviceId])
 
+    useEffect(() => {
+        return () => {
+            if (trailingTimerRef.current) clearTimeout(trailingTimerRef.current)
+        }
+    }, [])
+
     const publishThrottled = useCallback((topic, payload) => {
         if (!clientRef.current || !isConnected) return
         const targetTopic = resolveTopic(topic, deviceId)
         const now = Date.now()
-        if (now - lastPublishRef.current >= 100) { // 100ms = 10Hz
+        const elapsed = now - lastPublishRef.current
+
+        if (elapsed >= 100) { // 100ms = 10Hz
             clientRef.current.publish(targetTopic, JSON.stringify(payload))
             lastPublishRef.current = now
-            console.log(`[MQTT WebUI] Throttled Publish -> [${targetTopic}]:`, payload)
+            pendingPublishRef.current = null
+            if (trailingTimerRef.current) {
+                clearTimeout(trailingTimerRef.current)
+                trailingTimerRef.current = null
+            }
+            return
+        }
+
+        // Inside the throttle window: remember the latest value and
+        // guarantee it still gets sent once the window closes, even if
+        // this was the last change before releasing the slider.
+        pendingPublishRef.current = { targetTopic, payload }
+        if (!trailingTimerRef.current) {
+            trailingTimerRef.current = setTimeout(() => {
+                trailingTimerRef.current = null
+                if (!pendingPublishRef.current || !clientRef.current) return
+                const { targetTopic: t, payload: p } = pendingPublishRef.current
+                clientRef.current.publish(t, JSON.stringify(p))
+                lastPublishRef.current = Date.now()
+                pendingPublishRef.current = null
+            }, 100 - elapsed)
         }
     }, [isConnected, deviceId])
 
