@@ -18,5 +18,10 @@ module.exports = {
             },
         },
     },
+    // Preflight off: don't let Tailwind's base reset disturb the existing
+    // mithi pages (FK/IK/gaits are tested working — they stay untouched).
+    corePlugins: {
+        preflight: false,
+    },
     plugins: [],
 }
