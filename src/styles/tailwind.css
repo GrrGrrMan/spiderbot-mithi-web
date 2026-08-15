@@ -1,0 +1,7 @@
+/* web-ui/src/styles/tailwind.css */
+/* Tailwind source — generates src/tailwind-output.css via CLI.
+   Run: npm run tailwind:build (or tailwind:watch for dev).
+   Import the OUTPUT (tailwind-output.css) in index.js when ready. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
