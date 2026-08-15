@@ -7,6 +7,8 @@ import { Nav, NavDetailed, DimensionsWidget, ConsoleDrawer } from "./components"
 import { updateHexapod, Page } from "./AppHelpers"
 import HexapodPlot from "./components/HexapodPlot"
 import { useMqtt } from "./hooks/useMqtt"
+import ViewportToggle from "./components/viewport/ViewportToggle"
+import CameraView from "./components/camera/CameraView"
 
 window.dataLayer = window.dataLayer || []
 function gtag() {
@@ -16,6 +18,32 @@ function App() {
     const [inHexapodPage, setInHexapodPage] = useState(false)
     const [hexapod, setHexapod] = useState(() => updateHexapod("default"))
     const [revision, setRevision] = useState(0)
+
+    // P2 Phase B: stage viewport mode. The camera is a stage-swap inside
+    // #plot, NOT a nav page (see docs/future-roadmap/camera/README.md §B).
+    // Deep-link via ?view=camera so /camera (redirected from AppHelpers)
+    // lands the user in CAM mode without an extra click.
+    const [activeView, setActiveView] = useState(() => {
+        if (typeof window === "undefined") return "sim"
+        const params = new URLSearchParams(window.location.search)
+        return params.get("view") === "camera" ? "cam" : "sim"
+    })
+
+    // When the user flips back from CAM to SIM, force Plotly to recompute
+    // its container dimensions. Without this the canvas stays at the
+    // pre-swap size (the common React-Plotly "left over" bug).
+    useEffect(() => {
+        if (activeView === "sim") {
+            // requestAnimationFrame defers until the DOM has swapped in the
+            // HexapodPlot node; the resize event then triggers Plotly's
+            // relayout pass.
+            const id = requestAnimationFrame(() => {
+                window.dispatchEvent(new Event("resize"))
+            })
+            return () => cancelAnimationFrame(id)
+        }
+        return undefined
+    }, [activeView])
 
     const { isConnected, telemetry, logs, config, publishThrottled, publishImmediate, clearLogs } = useMqtt()
 
@@ -119,10 +147,24 @@ function App() {
                     {!inHexapodPage ? <NavDetailed /> : null}
                 </div>
                 <div id="plot" className="border" hidden={!inHexapodPage}>
-                    <HexapodPlot
-                        revision={revision}
-                        hexapod={hexapod}
-                    />
+                    {inHexapodPage && (
+                        <ViewportToggle
+                            activeView={activeView}
+                            onChange={setActiveView}
+                        />
+                    )}
+                    {activeView === "cam" ? (
+                        <CameraView
+                            config={config}
+                            telemetry={telemetry}
+                            isConnected={isConnected}
+                        />
+                    ) : (
+                        <HexapodPlot
+                            revision={revision}
+                            hexapod={hexapod}
+                        />
+                    )}
                 </div>
             </div>
 
