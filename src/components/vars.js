@@ -1,6 +1,6 @@
 import React from "react"
 import { GiCoffeeMug } from "react-icons/gi"
-import { FaGithubAlt, FaTimes, FaHome } from "react-icons/fa"
+import { FaGithubAlt, FaTimes, FaHome, FaCamera, FaMicrochip, FaVolumeUp, FaRobot } from "react-icons/fa"
 import { GrStatusGoodSmall } from "react-icons/gr"
 
 const SECTION_NAMES = {
@@ -10,6 +10,10 @@ const SECTION_NAMES = {
     legPatterns: "Leg Patterns",
     landingPage: "Root",
     walkingGaits: "Walking Gaits",
+    camera: "Camera",
+    sensors: "Sensors",
+    audio: "Audio",
+    ai: "AI Assistant",
 }
 
 const PATH_NAMES = {
@@ -18,6 +22,10 @@ const PATH_NAMES = {
     legPatterns: "/leg-patterns",
     landingPage: "/",
     walkingGaits: "/walking-gaits",
+    camera: "/camera",
+    sensors: "/sensors",
+    audio: "/audio",
+    ai: "/ai",
 }
 
 const ANGLE_NAMES = ["alpha", "beta", "gamma"]
@@ -99,6 +107,10 @@ const ICON_COMPONENTS = {
     octocat: <FaGithubAlt className="vertical-align" />,
     times: <FaTimes className="vertical-align" />,
     home: <FaHome className="vertical-align" />,
+    camera: <FaCamera className="vertical-align" />,
+    microchip: <FaMicrochip className="vertical-align" />,
+    volume: <FaVolumeUp className="vertical-align" />,
+    robot: <FaRobot className="vertical-align" />,
 }
 
 /*************
@@ -132,6 +144,30 @@ const PATHS = {
         description: SECTION_NAMES.walkingGaits,
         icon: ICON_COMPONENTS.circle,
     },
+    camera: {
+        path: PATH_NAMES.camera,
+        description: SECTION_NAMES.camera,
+        icon: ICON_COMPONENTS.camera,
+        hidden: true, // P2: MJPEG stream + web feed
+    },
+    sensors: {
+        path: PATH_NAMES.sensors,
+        description: SECTION_NAMES.sensors,
+        icon: ICON_COMPONENTS.microchip,
+        hidden: true, // P4: ultrasonic proximity
+    },
+    audio: {
+        path: PATH_NAMES.audio,
+        description: SECTION_NAMES.audio,
+        icon: ICON_COMPONENTS.volume,
+        hidden: true, // P3: MAX98357 speaker
+    },
+    ai: {
+        path: PATH_NAMES.ai,
+        description: SECTION_NAMES.ai,
+        icon: ICON_COMPONENTS.robot,
+        hidden: true, // P5: STT → LLM → MQTT → TTS
+    },
 }
 
 const KOFI_LINK_PROPERTIES = {
@@ -153,8 +189,12 @@ const PATH_LINKS = [
     PATHS.forwardKinematics,
     PATHS.legPatterns,
     PATHS.walkingGaits,
+    PATHS.camera,
+    PATHS.sensors,
+    PATHS.audio,
+    PATHS.ai,
     PATHS.landingPage,
-]
+].filter(l => !l.hidden)
 
 const URL_LINKS = [KOFI_LINK_PROPERTIES, REPO_LINK_PROPERTIES]
 

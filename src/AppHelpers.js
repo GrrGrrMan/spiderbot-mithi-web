@@ -9,6 +9,10 @@ import {
     ForwardKinematicsPage,
     LegPatternPage,
     LandingPage,
+    CameraPanel,
+    SensorPanel,
+    AudioPanel,
+    AIPanel,
 } from "./components/pages"
 
 const UPDATE_TYPES = {
@@ -34,6 +38,18 @@ const Page = ({ pageComponent }) => (
         </Route>
         <Route path={PATHS.walkingGaits.path} exact>
             {pageComponent(WalkingGaitsPage)}
+        </Route>
+        <Route path={PATHS.camera.path} exact>
+            {pageComponent(CameraPanel)}
+        </Route>
+        <Route path={PATHS.sensors.path} exact>
+            {pageComponent(SensorPanel)}
+        </Route>
+        <Route path={PATHS.audio.path} exact>
+            {pageComponent(AudioPanel)}
+        </Route>
+        <Route path={PATHS.ai.path} exact>
+            {pageComponent(AIPanel)}
         </Route>
         <Route>
             <Redirect to="/" />
