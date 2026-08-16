@@ -1,129 +1,172 @@
 // web-ui/src/components/camera/StreamViewport.js
 //
-// P2 Phase B: the actual MJPEG renderer. Uses a plain <img> tag (the ESP32
-// CameraServer pushes a multipart/x-mixed-replace stream, which the browser
-// displays frame-by-frame). We can't use <video> because the source isn't a
-// single video file.
+// P2 Phase C fix (2026-08-16): transport switched from a bare no-cors <img>
+// pointed straight at the multipart stream to fetch() + ReadableStream MJPEG
+// parsing -> blob: URL per frame.
 //
-// Stall detection strategy (from best-practice research — see
-// docs/future-roadmap/camera/README.md §B):
-//   - <img>.onLoad timestamps are pushed into a small ring buffer.
-//   - A 3-second watchdog (setInterval) flips to "stalled" if no fresh frame
-//     has arrived, then bumps the <img> key so React remounts the node —
-//     which forces a fresh HTTP connection and breaks the "frozen last frame"
-//     failure mode documented for MJPEG streams.
-//   - Reconnect is capped: at most one remount per 5 seconds, otherwise we
-//     declare "connection lost" and the parent renders OfflinePlaceholder.
-//   - FPS is measured from the last ~10 onLoad timestamps via EMA.
+// WHY: Chromium fires <img>.onLoad once per CONNECTION (not per frame) for
+// multipart/x-mixed-replace, so the old onLoad-based FPS + stall watchdog mis-
+// fired on a healthy stream (FPS always "<1", spurious remounts, eventual false
+// "lost"). Parsing frames ourselves gives REAL per-frame events: honest FPS,
+// honest stall detection, and clean "lost"/recovery signalling to the parent
+// (which shows OfflinePlaceholder).
 //
-// Cache-busting (?t=…) is only appended on remount, not per-frame —
-// otherwise it would defeat the multipart stream.
+// Contract: url must be CORS-accessible (fetch). The CAM's :81/stream now emits
+// Access-Control-Allow-Origin: * (CameraServer.cpp). The boundary token is read
+// from the response Content-Type, so this parses both the mock fixture and the
+// ESP32 CameraServer wire format generically.
 
 import React, { useEffect, useRef, useState, useCallback } from "react"
 import StreamStatusBar from "./StreamStatusBar"
 
-const STALL_MS = 3000 // watchdog threshold
-const REMOUNT_COOLDOWN_MS = 5000 // minimum gap between reconnects
-const FPS_WINDOW = 10 // ring-buffer depth for FPS calc
-const FPS_TICK_MS = 2000 // how often we recompute the EMA
+const STALL_MS = 3000 // no frame for this long -> "stalled" badge
+const LOST_MS = 8000 // no frame for this long -> notify parent (placeholder)
+const FPS_WINDOW_MS = 2000 // sliding window for the FPS EMA
 
-const StreamViewport = ({ url, isConnected }) => {
-    const [imgKey, setImgKey] = useState(0)
+const StreamViewport = ({ url, isConnected, onStatus }) => {
+    const [blobUrl, setBlobUrl] = useState(null)
     const [stalled, setStalled] = useState(false)
-    const [lost, setLost] = useState(false)
     const [fps, setFps] = useState(0)
-    const [cacheBust, setCacheBust] = useState(0)
 
-    // Mutable refs survive renders without retriggering effects.
-    const lastLoadRef = useRef(0)
-    const loadTimesRef = useRef([])
-    const lastRemountRef = useRef(0)
+    const genRef = useRef(0) // invalidates stale async work on url/unmount
+    const aborterRef = useRef(null)
+    const lastFrameRef = useRef(0)
     const emaFpsRef = useRef(0)
-    const mountStartRef = useRef(Date.now())
+    const lostRef = useRef(false)
+    const onStatusRef = useRef(onStatus)
+    onStatusRef.current = onStatus
 
-    // Reset all state when the source URL changes (e.g. precedence flipped).
-    useEffect(() => {
-        lastLoadRef.current = 0
-        loadTimesRef.current = []
-        lastRemountRef.current = 0
-        emaFpsRef.current = 0
-        mountStartRef.current = Date.now()
-        setImgKey(k => k + 1) // force fresh <img>
-        setCacheBust(Date.now())
-        setStalled(false)
-        setLost(false)
-        setFps(0)
-    }, [url])
+    const notifyLost = useCallback(lost => {
+        lostRef.current = lost
+        if (onStatusRef.current) onStatusRef.current({ lost })
+    }, [])
 
-    // Stall watchdog: every STALL_MS, check the gap since last frame.
     useEffect(() => {
-        if (!url) return undefined
-        const id = setInterval(() => {
+        if (!url) {
+            setBlobUrl(prev => {
+                if (prev) URL.revokeObjectURL(prev)
+                return null
+            })
+            return undefined
+        }
+
+        const gen = ++genRef.current
+        const ac = new AbortController()
+        aborterRef.current = ac
+
+        let buffer = "" // latin1 binary string; JPEG bytes map 1:1 to chars
+        const bytesToLatin1 = bytes => { let s = ""; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return s }
+        const frames = []
+        let lastFrame = Date.now()
+        let connected = false
+
+        const pushFrame = bytes => {
+            if (genRef.current !== gen) return
             const now = Date.now()
-            // If no frame has ever arrived, anchor "last frame" at mount time
-            // so the gap grows on every tick. On the first tick, gap ==
-            // STALL_MS which is *not* > STALL_MS (we want a one-tick grace
-            // period to let the multipart handshake complete); from tick 2
-            // onward, gap > STALL_MS and the normal stalled logic kicks in.
-            const mountStart = mountStartRef.current
-            const lastFrame =
-                lastLoadRef.current === 0 ? mountStart : lastLoadRef.current
-            const gap = now - lastFrame
-
-            if (gap > STALL_MS) {
-                setStalled(true)
-                if (now - lastRemountRef.current > REMOUNT_COOLDOWN_MS) {
-                    lastRemountRef.current = now
-                    setImgKey(k => k + 1)
-                    setCacheBust(now)
-                } else if (gap > STALL_MS + REMOUNT_COOLDOWN_MS) {
-                    setLost(true)
-                }
-            } else if (stalled) {
-                // Recovered — fresh frame arrived.
-                setStalled(false)
-                setLost(false)
+            setBlobUrl(prev => {
+                if (prev) URL.revokeObjectURL(prev)
+                return URL.createObjectURL(new Blob([bytes], { type: "image/jpeg" }))
+            })
+            lastFrame = now
+            lastFrameRef.current = now
+            frames.push(now)
+            while (
+                frames.length > 2 &&
+                frames[frames.length - 1] - frames[0] > FPS_WINDOW_MS
+            ) {
+                frames.shift()
             }
-        }, STALL_MS)
-        return () => clearInterval(id)
-    }, [url, stalled])
+            if (frames.length >= 2) {
+                const span = frames[frames.length - 1] - frames[0]
+                if (span > 0) {
+                    const instant = ((frames.length - 1) * 1000) / span
+                    emaFpsRef.current =
+                        emaFpsRef.current === 0
+                            ? instant
+                            : 0.6 * emaFpsRef.current + 0.4 * instant
+                    setFps(emaFpsRef.current)
+                }
+            }
+            setStalled(false)
+            if (lostRef.current) notifyLost(false)
+        }
 
-    // FPS sampler — converts the ring buffer of timestamps to a smoothed FPS.
-    useEffect(() => {
-        if (!url) return undefined
+        const run = async () => {
+            try {
+                const res = await fetch(url, { signal: ac.signal })
+                if (genRef.current !== gen) return
+                if (!res.ok || !res.body) throw new Error(`stream HTTP ${res.status}`)
+                connected = true
+
+                const ct = res.headers.get("content-type") || ""
+                const bm = /boundary=([^\s;]+)/i.exec(ct)
+                const boundary = bm ? bm[1] : "frame"
+                const marker = "--" + boundary
+                const hdrEndTok = "\r\n\r\n"
+
+                const reader = res.body.getReader()
+                for (;;) {
+                    const { value, done } = await reader.read()
+                    if (genRef.current !== gen) return
+                    if (done) break
+                    buffer += bytesToLatin1(value)
+
+                    let mi = buffer.indexOf(marker)
+                    while (mi !== -1) {
+                        const hs = buffer.indexOf(hdrEndTok, mi + marker.length)
+                        if (hs === -1) break // header not fully arrived yet
+                        const header = buffer.slice(mi + marker.length, hs)
+                        const m = /Content-Length:\s*(\d+)/i.exec(header)
+                        if (!m) break
+                        const len = parseInt(m[1], 10)
+                        const js = hs + hdrEndTok.length
+                        const frameEnd = js + len
+                        if (buffer.length < frameEnd) break // frame incomplete
+                        const frameStr = buffer.slice(js, frameEnd)
+                        const bytes = new Uint8Array(len)
+                        for (let i = 0; i < len; i++)
+                            bytes[i] = frameStr.charCodeAt(i) & 0xff
+                        pushFrame(bytes)
+                        buffer = buffer.slice(frameEnd)
+                        mi = buffer.indexOf(marker)
+                    }
+                }
+            } catch (err) {
+                if (genRef.current !== gen) return
+                if (err && err.name === "AbortError") return
+                // Refused / reset before we ever got frames -> definitely lost.
+                if (!connected) notifyLost(true)
+            }
+        }
+        run()
+
+        // Stall/lost watchdog over real frame-arrival timestamps.
         const id = setInterval(() => {
-            const times = loadTimesRef.current
-            if (times.length < 2) return
-            const span = times[times.length - 1] - times[0]
-            if (span <= 0) return
-            const instant = ((times.length - 1) * 1000) / span
-            emaFpsRef.current = emaFpsRef.current === 0
-                ? instant
-                : 0.6 * emaFpsRef.current + 0.4 * instant
-            setFps(emaFpsRef.current)
-        }, FPS_TICK_MS)
-        return () => clearInterval(id)
-    }, [url])
+            if (genRef.current !== gen) return
+            const gap = Date.now() - lastFrame
+            if (gap > LOST_MS) {
+                setStalled(true)
+                notifyLost(true)
+            } else if (gap > STALL_MS) {
+                setStalled(true)
+            } else {
+                setStalled(false)
+            }
+        }, 1000)
 
-    const handleLoad = useCallback(() => {
-        const now = Date.now()
-        lastLoadRef.current = now
-        const buf = loadTimesRef.current
-        buf.push(now)
-        if (buf.length > FPS_WINDOW) buf.shift()
-        setStalled(false)
-        setLost(false)
-    }, [])
+        return () => {
+            genRef.current++
+            ac.abort()
+            clearInterval(id)
+            setBlobUrl(prev => {
+                if (prev) URL.revokeObjectURL(prev)
+                return null
+            })
+        }
+    }, [url, notifyLost])
 
-    const handleError = useCallback(() => {
-        setStalled(true)
-    }, [])
-
-    // url=null (parent hasn't resolved one yet) or lost → render nothing.
-    // The parent (CameraView) decides what to show instead.
-    if (!url || lost) return null
-
-    const imgSrc = `${url}${url.includes("?") ? "&" : "?"}t=${cacheBust}`
+    // url null, or never-arrived stream, or lost (parent owns the placeholder).
+    if (!url || !blobUrl || lostRef.current) return null
 
     const wrapperStyle = {
         position: "absolute",
@@ -146,12 +189,9 @@ const StreamViewport = ({ url, isConnected }) => {
     return (
         <div style={wrapperStyle} data-testid="stream-viewport">
             <img
-                key={imgKey}
-                src={imgSrc}
+                src={blobUrl}
                 alt="Hexapod MJPEG stream"
                 style={imgStyle}
-                onLoad={handleLoad}
-                onError={handleError}
                 data-testid="stream-image"
             />
             <StreamStatusBar
@@ -164,4 +204,3 @@ const StreamViewport = ({ url, isConnected }) => {
 }
 
 export default StreamViewport
-

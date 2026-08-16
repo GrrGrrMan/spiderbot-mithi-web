@@ -1,24 +1,35 @@
 // web-ui/src/components/camera/__tests__/CameraView.test.js
 import React from "react"
 import "@testing-library/jest-dom/extend-expect"
-import { render, screen } from "@testing-library/react"
+import { render, screen, act } from "@testing-library/react"
 import CameraView, { resolveMjpegUrl } from "../CameraView"
 
-// Stub the children so we don't pull in the StreamViewport's setInterval
-// watchdog (which would leave open handles in jsdom). We test
-// StreamViewport's stall logic via a dedicated file later if needed.
-jest.mock("../StreamViewport", () => ({
-    __esModule: true,
-    default: ({ url }) => (
-        <div data-testid="stream-viewport-stub" data-url={url} />
-    ),
-}))
+// Stub the children so we don't pull in the StreamViewport's fetch + watchdog
+// (which would leave open handles in jsdom). The stub also lets us simulate a
+// parent-observable "lost" report via the new onStatus prop.
+let mockTriggerLost = false
+jest.mock("../StreamViewport", () => {
+    const { useEffect } = require("react")
+    return {
+        __esModule: true,
+        default: ({ url, onStatus }) => {
+            useEffect(() => {
+                if (mockTriggerLost && onStatus) onStatus({ lost: true })
+            }, [onStatus])
+            return <div data-testid="stream-viewport-stub" data-url={url} />
+        },
+    }
+})
 jest.mock("../OfflinePlaceholder", () => ({
     __esModule: true,
     default: ({ reason }) => (
         <div data-testid="camera-offline-placeholder">{reason || "Camera not available"}</div>
     ),
 }))
+
+afterEach(() => {
+    mockTriggerLost = false
+})
 
 // A small helper so each test can pass an explicit URLSearchParams — the
 // component reads from window.location by default which is brittle in jest.
@@ -141,5 +152,23 @@ describe("CameraView", () => {
             />
         )
         expect(screen.getByTestId("camera-view")).toBeInTheDocument()
+    })
+
+    it("renders OfflinePlaceholder when the stream reports lost", async () => {
+        mockTriggerLost = true
+        await act(async () => {
+            render(
+                <CameraView
+                    config={{ mjpeg_url: "http://x:81/stream" }}
+                    telemetry={null}
+                    isConnected={true}
+                />
+            )
+            await Promise.resolve() // let the mocked onStatus effect re-render
+        })
+        expect(
+            screen.getByTestId("camera-offline-placeholder")
+        ).toBeInTheDocument()
+        expect(screen.getByText(/stream lost/i)).toBeInTheDocument()
     })
 })

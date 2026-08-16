@@ -4,129 +4,145 @@ import "@testing-library/jest-dom/extend-expect"
 import { render, screen, act } from "@testing-library/react"
 import StreamViewport from "../StreamViewport"
 
-// StreamViewport owns two setInterval timers (3s stall watchdog, 2s FPS
-// sampler). We use fake timers + manual advancement so jsdom never leaves
-// open handles and so we can deterministically drive time forward to
-// observe the "stalled → remount" and "lost → unmount" transitions.
-//
-// IMPORTANT: this jest version (react-scripts 3.4.4 → jest 24) fakes
-// setTimeout/setInterval but NOT Date.now. The watchdog and FPS sampler
-// timestamp with Date.now(), so we stub it too and advance our own `nowMs`
-// in lockstep with the fake timers, in ≤3000ms substeps so interval
-// callbacks observe a realistically increasing time (not a single giant
-// jump — the watchdog's grace-period math depends on tick spacing).
+// New transport: fetch() + a stream of multipart MJPEG frames parsed into
+// blob: URLs. jsdom lacks a spec-compliant Blob/stream/URL.createObjectURL, so
+// we inject a controllable fake stream (getReader/read) under global.fetch,
+// a fake Blob, and stub URL.createObjectURL. The watchdog (1s interval) is
+// driven with fake timers + a Date.now stub so stall/lost transitions are
+// deterministic.
+
+const latin1Bytes = str => {
+    const u = new Uint8Array(str.length)
+    for (let i = 0; i < str.length; i++) u[i] = str.charCodeAt(i) & 0xff
+    return u
+}
+
+// A frame segment exactly matching the mock/firmware wire format.
+const partOf = (bytes) => {
+    const content = String.fromCharCode.apply(null, bytes)
+    return `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${bytes.length}\r\n\r\n${content}\r\n`
+}
+
+// Deterministic, jsdom-safe stream stand-in (getReader().read() resolves on push).
+function makeStream() {
+    const s = { closed: false, queue: [], pending: null }
+    s.getReader = () => ({
+        read: () => {
+            if (s.closed && !s.queue.length) return Promise.resolve({ value: undefined, done: true })
+            if (s.queue.length) return Promise.resolve({ value: s.queue.shift(), done: false })
+            return new Promise(res => { s.pending = res })
+        },
+    })
+    s.push = bytes => {
+        if (s.pending) {
+            const r = s.pending; s.pending = null
+            r({ value: bytes, done: false })
+        } else s.queue.push(bytes)
+    }
+    s.close = () => { s.closed = true; if (s.pending) { const r = s.pending; s.pending = null; r({ value: undefined, done: true }) } }
+    return s
+}
 
 let nowMs = 0
+let stream
+let fetchMock
+let onStatus
 
 beforeEach(() => {
     nowMs = 0
     jest.useFakeTimers()
     jest.spyOn(Date, "now").mockImplementation(() => nowMs)
+
+    const oldURL = global.URL
+    global.URL = { createObjectURL: () => "blob:mock-frame", revokeObjectURL: () => {} }
+    global.Blob = class { constructor(parts) { this.parts = parts } }
+    global._restoreURL = () => { global.URL = oldURL }
+
+    stream = makeStream()
+    fetchMock = jest.fn(() =>
+        Promise.resolve({
+            ok: true,
+            status: 200,
+            headers: { get: () => "multipart/x-mixed-replace; boundary=frame" },
+            body: stream,
+        })
+    )
+    global.fetch = fetchMock
+    onStatus = jest.fn()
 })
 
 afterEach(() => {
+    if (global._restoreURL) global._restoreURL()
+    delete global.fetch
+    delete global.Blob
     Date.now.mockRestore()
     jest.useRealTimers()
 })
 
-// Advance BOTH the fake clock and the Date.now stub in ≤3000ms steps so
-// each watchdog tick fires at the time the watchdog would actually see.
+// Pump microtasks inside act so fetch resolution + reader.read continuations
+// (which call setState) are wrapped.
+const pump = () => act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+// Advance both the fake clock and the Date.now stub in 1s steps so the
+// watchdog's 1s interval ticks observe a monotonic real-ish nowMs.
 const advance = ms => {
     act(() => {
         const end = nowMs + ms
         while (nowMs < end) {
-            const step = Math.min(3000, end - nowMs)
+            const step = Math.min(1000, end - nowMs)
             nowMs += step
             jest.advanceTimersByTime(step)
         }
     })
 }
 
-describe("StreamViewport", () => {
+const FRAME = [0xff, 0xd8, 0xff, 0xe0]
 
-    it("renders an <img> with the cache-busted source URL", () => {
-        render(
-            <StreamViewport url="http://cam.local:81/stream" isConnected={true} />
-        )
+describe("StreamViewport (fetch + ReadableStream transport)", () => {
+    it("fetches the URL and renders a blob-backed <img> when frames arrive", async () => {
+        render(<StreamViewport url="http://cam.local:81/stream" isConnected={true} onStatus={onStatus} />)
+        await pump() // fetch resolves, reader.read() becomes pending
+        expect(fetchMock).toHaveBeenCalledWith("http://cam.local:81/stream", expect.any(Object))
+
+        act(() => { stream.push(latin1Bytes(partOf(FRAME))) })
+        await pump()
         const img = screen.getByTestId("stream-image")
-        expect(img.tagName).toBe("IMG")
-        // Cache-bust query param must be present (defeats HTTP cache).
-        expect(img.getAttribute("src")).toMatch(
-            /^http:\/\/cam\.local:81\/stream\?t=\d+$/
-        )
+        expect(img).toHaveAttribute("src", "blob:mock-frame")
+        expect(onStatus).not.toHaveBeenCalled()
     })
 
-    it("flips to stalled after STALL_MS with no onLoad activity", () => {
-        render(
-            <StreamViewport url="http://cam.local:81/stream" isConnected={true} />
-        )
-        // No onLoad fires — advance past the 3 s stall threshold. The FIRST
-        // watchdog tick (at +3000ms) is the grace period (gap == STALL_MS,
-        // not >), so advance past +6000ms where the tick sees a 6000ms gap.
-        advance(6500)
-        expect(screen.getByTestId("stream-status")).toHaveTextContent(
-            /stalled/i
-        )
+    it("reports lost ({lost:true}) when the stream is unreachable", async () => {
+        fetchMock.mockImplementation(() => Promise.reject(new TypeError("fetch failed")))
+        render(<StreamViewport url="http://cam.local:81/stream" isConnected={true} onStatus={onStatus} />)
+        await pump()
+        expect(onStatus).toHaveBeenCalledWith({ lost: true })
+        // Component itself renders nothing once lost (parent shows placeholder).
+        expect(screen.queryByTestId("stream-image")).not.toBeInTheDocument()
     })
 
-    it("clears the stalled status when an onLoad arrives", () => {
-        render(
-            <StreamViewport url="http://cam.local:81/stream" isConnected={true} />
-        )
-        // First, go stalled (watchdog tick at +6000ms sees a 6000ms gap).
-        advance(6500)
+    it("shows a stalled badge when frames stop, and clears it on recovery", async () => {
+        render(<StreamViewport url="http://cam.local:81/stream" isConnected={true} onStatus={onStatus} />)
+        await pump()
+        act(() => { stream.push(latin1Bytes(partOf(FRAME))) })
+        await pump()
+        expect(screen.getByTestId("stream-image")).toBeInTheDocument()
+        expect(screen.queryByTestId("stream-status")).not.toBeInTheDocument()
+
+        // Stop frames → advance past STALL_MS (3s). Watchdog ticks at 1s.
+        advance(4000)
         expect(screen.getByTestId("stream-status")).toHaveTextContent(/stalled/i)
 
-        // Fire an onLoad — should clear the stalled flag.
-        act(() => {
-            screen.getByTestId("stream-image").dispatchEvent(new Event("load"))
-        })
-
-        // Next watchdog tick (at +9000ms) sees a fresh frame (gap 2500ms) →
-        // stalled stays cleared and the status badge disappears.
-        advance(3000)
+        // A fresh frame clears the stall.
+        act(() => { stream.push(latin1Bytes(partOf(FRAME))) })
+        await pump()
         expect(screen.queryByTestId("stream-status")).not.toBeInTheDocument()
     })
 
-    it("remounts the <img> (bumps its key) when stalled beyond cooldown", () => {
-        render(
-            <StreamViewport url="http://cam.local:81/stream" isConnected={true} />
-        )
-        const before = screen.getByTestId("stream-image")
-
-        // +3000ms tick = grace (gap == STALL_MS, not >). The +6000ms tick
-        // sees a 6000ms gap → stalled AND past the 5000ms remount cooldown
-        // (lastRemountRef starts at 0) → the <img> gets a fresh key + new
-        // cache-bust. Stop before +9000ms where "lost" would fire (jsdom
-        // never delivers an onLoad for the remounted img).
-        advance(6500)
-
-        const after = screen.getByTestId("stream-image")
-        expect(after).not.toBe(before)
-        // The src's cache-bust changed — fresh connection attempt.
-        expect(after.getAttribute("src")).not.toBe(before.getAttribute("src"))
-    })
-
-    it("renders nothing once lost (parent takes over with OfflinePlaceholder)", () => {
-        render(
-            <StreamViewport url="http://cam.local:81/stream" isConnected={true} />
-        )
-        // Tick +3000ms: grace period (gap == STALL_MS, not >) — no stall.
-        // Tick +6000ms: gap 6000ms > STALL_MS → stalled + remount (cooldown
-        //   met against lastRemountRef=0).
-        // Tick +9000ms: gap 9000ms > STALL_MS + REMOUNT_COOLDOWN_MS (8000ms)
-        //   while inside the remount cooldown → LOST.
-        advance(6000)
-        advance(3000)
-        // After "lost", StreamViewport returns null — no img, no viewport.
+    it("renders nothing and does not fetch when url is null", async () => {
+        render(<StreamViewport url={null} isConnected={false} onStatus={onStatus} />)
+        await pump()
+        expect(fetchMock).not.toHaveBeenCalled()
         expect(screen.queryByTestId("stream-image")).not.toBeInTheDocument()
-        expect(screen.queryByTestId("stream-viewport")).not.toBeInTheDocument()
-    })
-
-    it("does nothing when url is null (parent decides what to show)", () => {
-        render(<StreamViewport url={null} isConnected={false} />)
-        // No watchdog starts without a url — no timer side-effects, no img.
-        advance(10000)
-        expect(screen.queryByTestId("stream-image")).not.toBeInTheDocument()
+        expect(onStatus).not.toHaveBeenCalled()
     })
 })
