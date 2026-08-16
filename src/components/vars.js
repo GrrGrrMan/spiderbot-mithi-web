@@ -166,7 +166,7 @@ const PATHS = {
         path: PATH_NAMES.ai,
         description: SECTION_NAMES.ai,
         icon: ICON_COMPONENTS.robot,
-        hidden: true, // P5: STT → LLM → MQTT → TTS
+        hidden: false, // P5: STT → LLM → MQTT → TTS (unveiled 2026-08-16)
     },
 }
 
