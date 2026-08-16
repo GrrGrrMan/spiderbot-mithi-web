@@ -41,6 +41,10 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
     const [telemetry, setTelemetry] = useState(null)
     const [logs, setLogs] = useState([])
     const [config, setConfig] = useState(null)
+    // P5 — AI voice layer state: chat messages, AI service health, S3 audio playback status
+    const [aiMessages, setAiMessages] = useState([])
+    const [aiStatus, setAiStatus] = useState(null)
+    const [audioStatus, setAudioStatus] = useState(null)
     const clientRef = useRef(null)
     const lastPublishRef = useRef(0)
     const pendingPublishRef = useRef(null)
@@ -65,6 +69,10 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
             client.subscribe(`hexapod/${deviceId}/telemetry`)
             client.subscribe(`hexapod/${deviceId}/logs`)
             client.subscribe(`hexapod/${deviceId}/config`)
+            // P5 — AI voice layer
+            client.subscribe(`hexapod/${deviceId}/ai`)
+            client.subscribe(`hexapod/${deviceId}/ai/status`)
+            client.subscribe(`hexapod/${deviceId}/audio/status`)
             console.log(`[MQTT WebUI] Connected and subscribed to topics for device: ${deviceId}`)
         })
 
@@ -90,6 +98,25 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
                 }
             } else if (topic.endsWith("logs")) {
                 setLogs(prev => [...prev.slice(-99), payload])
+            } else if (topic.endsWith("/ai")) {
+                try {
+                    const msg = JSON.parse(payload)
+                    setAiMessages(prev => [...prev.slice(-199), msg])
+                } catch (e) {
+                    console.error("[MQTT WebUI] AI message parse error:", e)
+                }
+            } else if (topic.endsWith("ai/status")) {
+                try {
+                    setAiStatus(JSON.parse(payload))
+                } catch (e) {
+                    console.error("[MQTT WebUI] AI status parse error:", e)
+                }
+            } else if (topic.endsWith("audio/status")) {
+                try {
+                    setAudioStatus(JSON.parse(payload))
+                } catch (e) {
+                    console.error("[MQTT WebUI] Audio status parse error:", e)
+                }
             }
         })
 
@@ -168,5 +195,20 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         console.log(`[MQTT WebUI] Immediate Publish -> [${targetTopic}]:`, payload)
     }, [isConnected, deviceId])
 
-    return { isConnected, telemetry, logs, config, publishThrottled, publishImmediate, clearLogs }
+    // P5 — AI voice layer publishing helpers (topics are already device-scoped)
+    const publishAi = useCallback(payload => {
+        if (!clientRef.current || !isConnected) return
+        const topic = `hexapod/${deviceId}/ai`
+        clientRef.current.publish(topic, JSON.stringify(payload))
+        console.log(`[MQTT WebUI] AI Publish -> [${topic}]:`, payload)
+    }, [isConnected, deviceId])
+
+    const publishAudio = useCallback(payload => {
+        if (!clientRef.current || !isConnected) return
+        const topic = `hexapod/${deviceId}/audio`
+        clientRef.current.publish(topic, JSON.stringify(payload))
+        console.log(`[MQTT WebUI] Audio Publish -> [${topic}]:`, payload)
+    }, [isConnected, deviceId])
+
+    return { isConnected, telemetry, logs, config, aiMessages, aiStatus, audioStatus, publishThrottled, publishImmediate, publishAi, publishAudio, clearLogs }
 }

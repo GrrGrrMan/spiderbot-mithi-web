@@ -45,7 +45,7 @@ function App() {
         return undefined
     }, [activeView])
 
-    const { isConnected, telemetry, logs, config, publishThrottled, publishImmediate, clearLogs } = useMqtt()
+    const { isConnected, telemetry, logs, config, publishThrottled, publishImmediate, clearLogs, aiMessages, aiStatus, audioStatus, publishAi, publishAudio } = useMqtt()
 
     useEffect(() => {
         if (!config || !config.dimensions) return
@@ -102,6 +102,12 @@ function App() {
             onUpdate={manageState}
             publishThrottled={publishThrottled}
             publishImmediate={publishImmediate}
+            publishAi={publishAi}
+            publishAudio={publishAudio}
+            aiMessages={aiMessages}
+            aiStatus={aiStatus}
+            audioStatus={audioStatus}
+            isConnected={isConnected}
             params={{
                 dimensions: hexapod.dimensions,
                 pose: hexapod.pose,
