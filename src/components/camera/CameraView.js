@@ -15,7 +15,7 @@
 // the placeholder if isConnected is false AND we've never seen a URL,
 // OR if we've gone lost (StreamViewport flagged it).
 
-import React, { useMemo, useRef } from "react"
+import React, { useMemo, useRef, useState, useEffect } from "react"
 import StreamViewport from "./StreamViewport"
 import OfflinePlaceholder from "./OfflinePlaceholder"
 
@@ -42,7 +42,8 @@ export const resolveMjpegUrl = (config, telemetry, searchParams) => {
     return null
 }
 
-const reasonFor = (url, isConnected) => {
+const reasonFor = (url, isConnected, lost) => {
+    if (lost) return "Stream lost — camera went offline"
     if (url) return null
     if (!isConnected) return "Waiting for MQTT…"
     return "Camera not yet announced (no mjpeg_url in config)"
@@ -70,8 +71,22 @@ const CameraView = ({ config, telemetry, isConnected }) => {
     const lastUrlRef = useRef(url)
     if (url) lastUrlRef.current = url
 
+    // Surface the stream's connection state from StreamViewport so a lost /
+    // unreachable stream shows OfflinePlaceholder instead of a dead black
+    // stage. Reset whenever the resolved URL changes or reconverges.
+    const [lost, setLost] = useState(false)
+    const prevUrlRef = useRef(url)
+    useEffect(() => {
+        if (prevUrlRef.current !== url) {
+            prevUrlRef.current = url
+            setLost(false)
+        }
+    }, [url])
+
     const effectiveUrl = url // current resolution wins; OfflinePlaceholder
-                             // takes over only when this is null
+                             // takes over for a null URL or a lost stream
+
+    const showPlaceholder = !effectiveUrl || lost
 
     const wrapperStyle = {
         position: "absolute",
@@ -80,10 +95,14 @@ const CameraView = ({ config, telemetry, isConnected }) => {
 
     return (
         <div style={wrapperStyle} data-testid="camera-view">
-            {effectiveUrl ? (
-                <StreamViewport url={effectiveUrl} isConnected={isConnected} />
+            {showPlaceholder ? (
+                <OfflinePlaceholder reason={reasonFor(effectiveUrl, isConnected, lost)} />
             ) : (
-                <OfflinePlaceholder reason={reasonFor(effectiveUrl, isConnected)} />
+                <StreamViewport
+                    url={effectiveUrl}
+                    isConnected={isConnected}
+                    onStatus={({ lost: isLost }) => setLost(isLost)}
+                />
             )}
         </div>
     )
