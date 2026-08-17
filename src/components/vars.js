@@ -174,7 +174,7 @@ const PATHS = {
         path: PATH_NAMES.presets,
         description: SECTION_NAMES.presets,
         icon: ICON_COMPONENTS.circle,
-        hidden: true, // Chunk 2: keyframe presets (motionSynthesizer) — unveil when ready
+        hidden: false, // Chunk 2: keyframe presets (motionSynthesizer) — unveiled 2026-08-18
     },
 }
 
