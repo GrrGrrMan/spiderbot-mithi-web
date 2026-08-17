@@ -7,6 +7,7 @@ import CameraPanel from "./CameraPanel"
 import SensorPanel from "./SensorPanel"
 import AudioPanel from "./AudioPanel"
 import AIPanel from "./AIPanel"
+import PresetsPage from "./PresetsPage"
 
 export {
     ForwardKinematicsPage,
@@ -18,4 +19,5 @@ export {
     SensorPanel,
     AudioPanel,
     AIPanel,
+    PresetsPage,
 }
