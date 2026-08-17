@@ -2,6 +2,12 @@ import React from "react"
 import { render, screen, fireEvent } from "@testing-library/react"
 import AIPanel from "../../components/pages/AIPanel"
 
+beforeEach(() => {
+    // AIPanel reads its initial messages from sessionStorage; the previous
+    // test's push() would otherwise leak into the next test's render.
+    window.sessionStorage.clear()
+})
+
 const makeProps = overrides => ({
     publishImmediate: jest.fn(),
     publishAi: jest.fn(),

@@ -5,21 +5,31 @@ import mqtt from "mqtt"
 const getBrokerUrl = () => {
     const params = new URLSearchParams(window.location.search)
     const queryBroker = params.get("broker")
-    
+
+    // Pick ws:// vs wss:// to match the page's protocol so browsers don't block
+    // the WebSocket as mixed-content when the page is served over HTTPS.
+    // On HTTPS we also point at Caddy's WSS-terminating listener on :9443,
+    // because mosquitto's plain-WS listener on :9001 is already taken; Caddy
+    // strips TLS and forwards plaintext to ws://127.0.0.1:9001. On HTTP we
+    // use the broker directly on :9001.
+    const isHttps = window.location.protocol === "https:"
+    const wsScheme = isHttps ? "wss" : "ws"
+    const wsPort = isHttps ? "9443" : "9001"
+
     // 1. Manual override via URL (e.g., http://localhost:3000/?broker=pi-hub.local)
     if (queryBroker) {
-        return `ws://${queryBroker}:9001`
+        return `${wsScheme}://${queryBroker}:${wsPort}`
     }
-    
+
     const hostname = window.location.hostname
-    
+
     // 2. Development Mode: Fallback to the EMQX cloud broker for Wokwi testing
     if (hostname === "localhost" || hostname === "127.0.0.1") {
         return "ws://broker.emqx.io:8083/mqtt"
     }
-    
+
     // 3. Production Mode: Auto-resolve to RPi's active address (192.168.4.1 or pi-hub.local)
-    return `ws://${hostname}:9001`
+    return `${wsScheme}://${hostname}:${wsPort}`
 }
 
 const resolveTopic = (topic, deviceId) => {
@@ -210,5 +220,5 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         console.log(`[MQTT WebUI] Audio Publish -> [${topic}]:`, payload)
     }, [isConnected, deviceId])
 
-    return { isConnected, telemetry, logs, config, aiMessages, aiStatus, audioStatus, publishThrottled, publishImmediate, publishAi, publishAudio, clearLogs }
+    return { isConnected, telemetry, logs, config, deviceId, aiMessages, aiStatus, audioStatus, publishThrottled, publishImmediate, publishAi, publishAudio, clearLogs }
 }

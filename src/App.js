@@ -45,7 +45,7 @@ function App() {
         return undefined
     }, [activeView])
 
-    const { isConnected, telemetry, logs, config, publishThrottled, publishImmediate, clearLogs, aiMessages, aiStatus, audioStatus, publishAi, publishAudio } = useMqtt()
+    const { isConnected, telemetry, logs, config, deviceId, publishThrottled, publishImmediate, clearLogs, aiMessages, aiStatus, audioStatus, publishAi, publishAudio } = useMqtt()
 
     useEffect(() => {
         if (!config || !config.dimensions) return
@@ -108,6 +108,7 @@ function App() {
             aiStatus={aiStatus}
             audioStatus={audioStatus}
             isConnected={isConnected}
+            aiDeviceId={deviceId}
             params={{
                 dimensions: hexapod.dimensions,
                 pose: hexapod.pose,
