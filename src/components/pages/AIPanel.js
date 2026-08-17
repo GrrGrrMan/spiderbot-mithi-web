@@ -54,6 +54,17 @@ const healthOf = aiStatus => {
     }
 }
 
+const cacheHitRate = aiStatus => {
+    // 2026-08-18: LLM response cache stats ride along on the heartbeat.
+    // Returns a "3/12 (25%)" string, or null if not yet known.
+    const c = aiStatus && aiStatus.llm && aiStatus.llm.cache
+    if (!c) return null
+    const total = (c.hits || 0) + (c.misses || 0)
+    if (total === 0) return "0/0 (—)"
+    const pct = Math.round((c.hits / total) * 100)
+    return `${c.hits}/${total} (${pct}%)`
+}
+
 const AIPanel = ({
     publishImmediate = () => {},
     publishAi = () => {},
@@ -64,6 +75,7 @@ const AIPanel = ({
     isConnected = false,
     onMount = () => {},
     aiDeviceId = "default",
+    clearAiMessages = () => {},
 }) => {
     const [messages, setMessages] = useState(() => loadChat(aiDeviceId))
     const [input, setInput] = useState("")
@@ -108,8 +120,9 @@ const AIPanel = ({
 
     const clearChat = useCallback(() => {
         setMessages([])
+        clearAiMessages()
         try { window.sessionStorage.removeItem(chatStorageKey(aiDeviceId)) } catch (e) { /* ignore */ }
-    }, [aiDeviceId])
+    }, [aiDeviceId, clearAiMessages])
 
     const executeAction = useCallback(action => {
         const { payload, topic, duration_ms, reply } = action
@@ -249,6 +262,9 @@ const AIPanel = ({
                 </span>
                 <span>
                     STT local · TTS local · LLM {aiStatus && aiStatus.llm ? `${aiStatus.llm.provider}:${aiStatus.llm.model}` : "—"}
+                    {cacheHitRate(aiStatus) && (
+                        <span title="LLM response cache hit rate (RPi)"> · cache {cacheHitRate(aiStatus)}</span>
+                    )}
                 </span>
                 <span style={{ color: audioStatus && audioStatus.state === "playing" ? "var(--c4-amber)" : "inherit" }}>
                     {audioStatus && audioStatus.state === "playing" ? "🔊 speaking…" : "speaker idle"}
