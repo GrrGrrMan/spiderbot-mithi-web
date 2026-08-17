@@ -1,5 +1,5 @@
 import React from "react"
-import { render, screen, fireEvent } from "@testing-library/react"
+import { render, screen, fireEvent, act } from "@testing-library/react"
 import AIPanel from "../../components/pages/AIPanel"
 
 beforeEach(() => {
@@ -17,6 +17,9 @@ const makeProps = overrides => ({
     audioStatus: null,
     aiMessages: [],
     onMount: jest.fn(),
+    // Chunk 2 — preset gestures stream {type:"pose"} frames from the local
+    // interpolator; AIPanel falls back to defaults when params are missing.
+    params: {},
     ...overrides,
 })
 
@@ -105,5 +108,52 @@ describe("AIPanel", () => {
         render(<AIPanel {...makeProps({ aiStatus: { state: "online", llm: { provider: "groq", model: "x" } } })} />)
         expect(screen.getByText("AI online")).toBeInTheDocument()
         expect(screen.getByText(/groq:x/)).toBeInTheDocument()
+    })
+
+    // Chunk 2 — preset actions are web-ui-executed (the firmware has no preset
+    // handler): clicking the card runs the local interpolator and streams
+    // {type:"pose"} frames instead of publishing the raw preset payload.
+    test("preset actions run the local interpolator, not raw MQTT", () => {
+        jest.useFakeTimers()
+        const publishImmediate = jest.fn()
+        render(<AIPanel {...makeProps({ publishImmediate })} />)
+        fireEvent.click(screen.getByRole("button", { name: "Wave" }))
+        // The raw {type:"preset"} payload never hits MQTT
+        expect(publishImmediate).not.toHaveBeenCalled()
+        // Canned reply still echoes into the chat
+        expect(screen.getByText("Hello there — wave!")).toBeInTheDocument()
+        // The local interpolator streams {type:"pose"} frames instead
+        act(() => {
+            jest.advanceTimersByTime(600)
+        })
+        expect(publishImmediate).toHaveBeenCalledWith(
+            "hexapod/cmd",
+            expect.objectContaining({ type: "pose", pose: expect.anything() })
+        )
+        jest.useRealTimers()
+    })
+
+    test("assistant reply with action_id triggers the local preset", () => {
+        jest.useFakeTimers()
+        const publishImmediate = jest.fn()
+        const { rerender } = render(<AIPanel {...makeProps({ publishImmediate, aiMessages: [] })} />)
+        rerender(
+            <AIPanel
+                {...makeProps({
+                    publishImmediate,
+                    aiMessages: [
+                        { role: "assistant", type: "text", content: "Hello there — wave!", action_id: "preset_wave" },
+                    ],
+                })}
+            />
+        )
+        act(() => {
+            jest.advanceTimersByTime(600)
+        })
+        expect(publishImmediate).toHaveBeenCalledWith(
+            "hexapod/cmd",
+            expect.objectContaining({ type: "pose", pose: expect.anything() })
+        )
+        jest.useRealTimers()
     })
 })

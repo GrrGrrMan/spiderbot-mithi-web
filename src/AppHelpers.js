@@ -13,6 +13,7 @@ import {
     SensorPanel,
     AudioPanel,
     AIPanel,
+    PresetsPage,
 } from "./components/pages"
 
 // P2 Phase B: CameraPanel is still re-exported from ./components/pages for
@@ -59,6 +60,9 @@ const Page = ({ pageComponent }) => (
         </Route>
         <Route path={PATHS.ai.path} exact>
             {pageComponent(AIPanel)}
+        </Route>
+        <Route path={PATHS.presets.path} exact>
+            {pageComponent(PresetsPage)}
         </Route>
         <Route>
             <Redirect to="/" />

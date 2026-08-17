@@ -8,6 +8,10 @@ import AI_ACTIONS from "../../constants/aiActions.json"
 import { SECTION_NAMES } from "../vars"
 import { buildWav, to16kPcm, bytesToBase64, blockRms } from "../../utils/aiAudio"
 import { matchAction } from "../../utils/aiActionMatcher"
+import { DEFAULT_POSE, DEFAULT_DIMENSIONS } from "../../templates"
+import { buildServoBatchPayload } from "../../utils/servoMapper"
+import { generatePresetFrames } from "../../hexapod/solvers/motionSynthesizer"
+import { usePoseFrameStream } from "../../hooks/usePoseFrameStream"
 
 const ACTIONS = AI_ACTIONS.actions
 const SILENCE_RMS = 0.02          // below this RMS = silence
@@ -76,6 +80,7 @@ const AIPanel = ({
     onMount = () => {},
     aiDeviceId = "default",
     clearAiMessages = () => {},
+    params = {},
 }) => {
     const [messages, setMessages] = useState(() => loadChat(aiDeviceId))
     const [input, setInput] = useState("")
@@ -85,8 +90,31 @@ const AIPanel = ({
     const chatRef = useRef(null)
     const recordingRef = useRef({})
 
+    // Chunk 2 — preset gestures run locally (the firmware has no preset handler):
+    // generatePresetFrames -> usePoseFrameStream -> {type:"pose"} over MQTT.
+    const [presetFrames, setPresetFrames] = useState([])
+    const lastDirectiveKeyRef = useRef(null)
+
     const aiOnline = aiStatus && aiStatus.state === "online"
     const health = healthOf(aiStatus)
+
+    const publishPresetPose = useCallback(
+        pose => publishImmediate("hexapod/cmd", buildServoBatchPayload(pose)),
+        [publishImmediate]
+    )
+
+    const { stop: stopPreset } = usePoseFrameStream(presetFrames, publishPresetPose)
+
+    const playPreset = useCallback(
+        presetName => {
+            if (!presetName) return
+            stopPreset()
+            const dims = (params && params.dimensions) || DEFAULT_DIMENSIONS
+            const startPose = (params && params.pose) || DEFAULT_POSE
+            setPresetFrames(generatePresetFrames(presetName, dims, 3, startPose, 10))
+        },
+        [params, stopPreset]
+    )
 
     useEffect(() => {
         onMount(SECTION_NAMES.ai)
@@ -102,6 +130,22 @@ const AIPanel = ({
             return added.length ? [...prev, ...added] : prev
         })
     }, [aiMessages])
+
+    // Chunk 2 — RPi preset directive. The ai-service never publishes preset
+    // payloads to the firmware cmd topic (no handler there); instead the
+    // assistant reply carries an `action_id` and web-ui runs the local
+    // interpolator. Idempotent across re-renders via (length | msgKey): new
+    // messages append to the array, so a repeat of the same reply still fires.
+    useEffect(() => {
+        if (!aiMessages || !aiMessages.length) return
+        const last = aiMessages[aiMessages.length - 1]
+        if (!last || !last.action_id) return
+        const key = `${aiMessages.length}|${msgKey(last)}`
+        if (lastDirectiveKeyRef.current === key) return
+        lastDirectiveKeyRef.current = key
+        const a = ACTIONS.find(x => x.id === last.action_id)
+        if (a && a.payload && a.payload.type === "preset") playPreset(a.payload.preset)
+    }, [aiMessages, playPreset])
 
     useEffect(() => {
         if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
@@ -128,6 +172,10 @@ const AIPanel = ({
         const { payload, topic, duration_ms, reply } = action
         if (topic === "audio") {
             publishAudio(payload)
+        } else if (payload && payload.type === "preset") {
+            // Chunk 2 — presets are web-ui-executed: the firmware has no preset
+            // handler, so run the local interpolator instead of MQTT.
+            playPreset(payload.preset)
         } else {
             publishImmediate("hexapod/cmd", payload)
             if (duration_ms > 0) {
@@ -137,7 +185,7 @@ const AIPanel = ({
             }
         }
         push("assistant", reply)
-    }, [publishAudio, publishImmediate, push])
+    }, [publishAudio, publishImmediate, push, playPreset])
 
     const handleSend = useCallback(() => {
         const text = input.trim()

@@ -14,6 +14,7 @@ const SECTION_NAMES = {
     sensors: "Sensors",
     audio: "Audio",
     ai: "AI Assistant",
+    presets: "Presets",
 }
 
 const PATH_NAMES = {
@@ -26,6 +27,7 @@ const PATH_NAMES = {
     sensors: "/sensors",
     audio: "/audio",
     ai: "/ai",
+    presets: "/presets",
 }
 
 const ANGLE_NAMES = ["alpha", "beta", "gamma"]
@@ -167,6 +169,12 @@ const PATHS = {
         description: SECTION_NAMES.ai,
         icon: ICON_COMPONENTS.robot,
         hidden: false, // P5: STT → LLM → MQTT → TTS (unveiled 2026-08-16)
+    },
+    presets: {
+        path: PATH_NAMES.presets,
+        description: SECTION_NAMES.presets,
+        icon: ICON_COMPONENTS.circle,
+        hidden: true, // Chunk 2: keyframe presets (motionSynthesizer) — unveil when ready
     },
 }
 
