@@ -4,7 +4,7 @@
 // the normal servo payload path ({type:"pose", pose}) via usePoseFrameStream —
 // ZERO firmware changes.
 //
-// Nav entry is hidden by default: see PATHS.presets.hidden in components/vars.js.
+// Nav entry: unveiled 2026-08-18 (PATHS.presets.hidden = false in components/vars.js).
 import React, { useState, useCallback, useEffect } from "react"
 import { SECTION_NAMES } from "../vars"
 import { DEFAULT_POSE, DEFAULT_DIMENSIONS } from "../../templates"
