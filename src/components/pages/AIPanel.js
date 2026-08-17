@@ -14,6 +14,33 @@ const SILENCE_RMS = 0.02          // below this RMS = silence
 const SILENT_BLOCKS_FOR_END = 10  // ~0.85s @ 4096/48k blocks
 const MAX_SLICE_MS = 2500         // flush long speech every 2.5s
 const OFFLINE_REPLY = "I'm running in offline mode right now — try an action button!"
+const MAX_PERSISTED_MESSAGES = 200  // ~sessionStorage body cap; trim older
+
+// Session-scoped chat cache. Survives nav-away/nav-back, hard refresh, and
+// tab restore. Per-device so multi-device users (?device=...) don't bleed.
+// Cleared automatically on tab close (sessionStorage, not localStorage).
+const chatStorageKey = (deviceId) => `hexapod/ai-chat/${deviceId || "default"}`
+
+const loadChat = (deviceId) => {
+    try {
+        const raw = window.sessionStorage.getItem(chatStorageKey(deviceId))
+        if (!raw) return []
+        const parsed = JSON.parse(raw)
+        return Array.isArray(parsed) ? parsed : []
+    } catch (e) {
+        return []
+    }
+}
+
+const saveChat = (deviceId, messages) => {
+    try {
+        // Keep the last N (most relevant — LLM context window equivalent).
+        const trim = messages.slice(-MAX_PERSISTED_MESSAGES)
+        window.sessionStorage.setItem(chatStorageKey(deviceId), JSON.stringify(trim))
+    } catch (e) {
+        // sessionStorage full / disabled — silent; chat still works in-memory.
+    }
+}
 
 const msgKey = m => `${m.role}|${m.type}|${m.content}`
 
@@ -36,8 +63,9 @@ const AIPanel = ({
     audioStatus = null,
     isConnected = false,
     onMount = () => {},
+    aiDeviceId = "default",
 }) => {
-    const [messages, setMessages] = useState([])
+    const [messages, setMessages] = useState(() => loadChat(aiDeviceId))
     const [input, setInput] = useState("")
     const [recording, setRecording] = useState(false)
     const [micBlocked, setMicBlocked] = useState(false)
@@ -67,9 +95,21 @@ const AIPanel = ({
         if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
     }, [messages])
 
+    // Persist chat to sessionStorage on every change so nav-away/nav-back and
+    // hard-refresh keep the visible history. Debounced-free: sessionStorage
+    // writes are sync but cheap; capped at MAX_PERSISTED_MESSAGES by saveChat.
+    useEffect(() => {
+        saveChat(aiDeviceId, messages)
+    }, [messages, aiDeviceId])
+
     const push = useCallback((role, content, type = "text") => {
         setMessages(prev => [...prev, { role, type, content, ts: Date.now() }])
     }, [])
+
+    const clearChat = useCallback(() => {
+        setMessages([])
+        try { window.sessionStorage.removeItem(chatStorageKey(aiDeviceId)) } catch (e) { /* ignore */ }
+    }, [aiDeviceId])
 
     const executeAction = useCallback(action => {
         const { payload, topic, duration_ms, reply } = action
@@ -201,6 +241,17 @@ const AIPanel = ({
                     {audioStatus && audioStatus.state === "playing" ? "🔊 speaking…" : "speaker idle"}
                 </span>
                 {!isConnected && <span style={{ color: "var(--c6-red)" }}>MQTT disconnected</span>}
+                <span style={{ marginLeft: "auto" }}>
+                    <button
+                        type="button"
+                        onClick={clearChat}
+                        style={{ ...btnStyle, padding: "2px 6px", fontSize: "0.7rem" }}
+                        title="Clear chat history (sessionStorage)"
+                        disabled={messages.length === 0}
+                    >
+                        Clear
+                    </button>
+                </span>
             </div>
             {/* Chat log */}
             <div ref={chatRef} style={{ height: 200, overflowY: "auto", border: "1px solid var(--c3-grey)", borderRadius: 4, padding: "8px", marginBottom: "8px" }}>
