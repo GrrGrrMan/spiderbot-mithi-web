@@ -39,18 +39,40 @@ const resolveTopic = (topic, deviceId) => {
     return topic
 }
 
-const getDeviceId = (defaultId = "hexapod-cam-01") => {
+const getDeviceId = (defaultId = "hexapod-s3-01") => {
     const params = new URLSearchParams(window.location.search)
     const queryDevice = params.get("device")
     return queryDevice || defaultId
 }
 
+// P6b servo cutover: the web-ui publishes commands/heartbeat/AI/audio to the
+// *controller* device (S3) by default, but the camera feed comes from a
+// separate device (CAM). The CAM stream is sourced independently so that
+// decoupling the camera from the controller doesn't break the MJPEG viewer.
+//
+// Override either via URL:
+//   ?device=<id>      -> controller/target device (default: hexapod-s3-01)
+//   ?cam=<id>         -> camera-source device      (default: hexapod-cam-01)
+// The CAM device is only subscribed (config + telemetry); we never publish
+// to it.
+const getCameraDeviceId = (defaultId = "hexapod-cam-01") => {
+    const params = new URLSearchParams(window.location.search)
+    const queryCam = params.get("cam")
+    return queryCam || defaultId
+}
+
 export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
     const deviceId = deviceIdOverride || getDeviceId()
+    const camDeviceId = getCameraDeviceId()
     const [isConnected, setIsConnected] = useState(false)
     const [telemetry, setTelemetry] = useState(null)
     const [logs, setLogs] = useState([])
     const [config, setConfig] = useState(null)
+    // P6b servo cutover: camera-feed source state. Kept independent of
+    // `config` / `telemetry` so the MJPEG viewer still resolves when the
+    // controller device (S3) doesn't emit mjpeg_url.
+    const [camTelemetry, setCamTelemetry] = useState(null)
+    const [camConfig, setCamConfig] = useState(null)
     // P5 — AI voice layer state: chat messages, AI service health, S3 audio playback status
     const [aiMessages, setAiMessages] = useState([])
     const [aiStatus, setAiStatus] = useState(null)
@@ -83,7 +105,14 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
             client.subscribe(`hexapod/${deviceId}/ai`)
             client.subscribe(`hexapod/${deviceId}/ai/status`)
             client.subscribe(`hexapod/${deviceId}/audio/status`)
-            console.log(`[MQTT WebUI] Connected and subscribed to topics for device: ${deviceId}`)
+            // P6b servo cutover: also subscribe to the camera-source device's
+            // config + telemetry so the MJPEG viewer can resolve the stream
+            // URL independently of the controller device.
+            if (camDeviceId && camDeviceId !== deviceId) {
+                client.subscribe(`hexapod/${camDeviceId}/telemetry`)
+                client.subscribe(`hexapod/${camDeviceId}/config`)
+            }
+            console.log(`[MQTT WebUI] Connected and subscribed to topics for device: ${deviceId}` + (camDeviceId !== deviceId ? ` (cam source: ${camDeviceId})` : ""))
         })
 
         client.on("close", () => {
@@ -92,36 +121,50 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
 
         client.on("message", (topic, message) => {
             const payload = message.toString()
-            
+            // P6b servo cutover: route telemetry/config by which device
+            // emitted it so the controller's telemetry doesn't clobber the
+            // camera's.
+            const isCamTopic = camDeviceId && topic.startsWith(`hexapod/${camDeviceId}/`)
+
             if (topic.endsWith("telemetry")) {
                 try {
-                    setTelemetry(JSON.parse(payload))
+                    const parsed = JSON.parse(payload)
+                    if (isCamTopic) {
+                        setCamTelemetry(parsed)
+                    } else {
+                        setTelemetry(parsed)
+                    }
                 } catch (e) {
                     console.error("[MQTT WebUI] Telemetry parse error:", e)
                 }
             } else if (topic.endsWith("config")) {
                 try {
-                    setConfig(JSON.parse(payload))
+                    const parsed = JSON.parse(payload)
+                    if (isCamTopic) {
+                        setCamConfig(parsed)
+                    } else {
+                        setConfig(parsed)
+                    }
                     console.log("[MQTT WebUI] Configuration handshake received:", payload)
                 } catch (e) {
                     console.error("[MQTT WebUI] Config parse error:", e)
                 }
-            } else if (topic.endsWith("logs")) {
+            } else if (topic.endsWith("logs") && !isCamTopic) {
                 setLogs(prev => [...prev.slice(-99), payload])
-            } else if (topic.endsWith("/ai")) {
+            } else if (topic.endsWith("/ai") && !isCamTopic) {
                 try {
                     const msg = JSON.parse(payload)
                     setAiMessages(prev => [...prev.slice(-199), msg])
                 } catch (e) {
                     console.error("[MQTT WebUI] AI message parse error:", e)
                 }
-            } else if (topic.endsWith("ai/status")) {
+            } else if (topic.endsWith("ai/status") && !isCamTopic) {
                 try {
                     setAiStatus(JSON.parse(payload))
                 } catch (e) {
                     console.error("[MQTT WebUI] AI status parse error:", e)
                 }
-            } else if (topic.endsWith("audio/status")) {
+            } else if (topic.endsWith("audio/status") && !isCamTopic) {
                 try {
                     setAudioStatus(JSON.parse(payload))
                 } catch (e) {
@@ -220,5 +263,5 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         console.log(`[MQTT WebUI] Audio Publish -> [${topic}]:`, payload)
     }, [isConnected, deviceId])
 
-    return { isConnected, telemetry, logs, config, deviceId, aiMessages, aiStatus, audioStatus, publishThrottled, publishImmediate, publishAi, publishAudio, clearLogs }
+    return { isConnected, telemetry, logs, config, deviceId, camDeviceId, camTelemetry, camConfig, aiMessages, aiStatus, audioStatus, publishThrottled, publishImmediate, publishAi, publishAudio, clearLogs }
 }

@@ -45,7 +45,7 @@ function App() {
         return undefined
     }, [activeView])
 
-    const { isConnected, telemetry, logs, config, deviceId, publishThrottled, publishImmediate, clearLogs, aiMessages, aiStatus, audioStatus, publishAi, publishAudio } = useMqtt()
+    const { isConnected, telemetry, logs, config, deviceId, camTelemetry, camConfig, publishThrottled, publishImmediate, clearLogs, aiMessages, aiStatus, audioStatus, publishAi, publishAudio } = useMqtt()
 
     useEffect(() => {
         if (!config || !config.dimensions) return
@@ -162,8 +162,8 @@ function App() {
                     )}
                     {activeView === "cam" ? (
                         <CameraView
-                            config={config}
-                            telemetry={telemetry}
+                            config={camConfig}
+                            telemetry={camTelemetry}
                             isConnected={isConnected}
                         />
                     ) : (
