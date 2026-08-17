@@ -132,7 +132,15 @@ const AIPanel = ({
         push("user", text)
         setInput("")
         if (aiOnline) {
-            publishAi({ type: "text", role: "user", content: text })
+            // Full conversation memory (2026-08-17): ship the visible chat log
+            // (excluding the message we just pushed) so the LLM sees prior turns.
+            // ai-service caps to its MAX_LLM_HISTORY internally; we cap at 50
+            // here to keep the MQTT payload reasonable.
+            const history = messages
+                .filter(m => m.role === "user" || m.role === "assistant")
+                .slice(-50)
+                .map(m => ({ role: m.role, content: m.content }))
+            publishAi({ type: "text", role: "user", content: text, history })
             return
         }
         // Offline deterministic fallback (task 5.1): keyword -> action, else canned reply.
@@ -142,7 +150,7 @@ const AIPanel = ({
         } else {
             push("assistant", OFFLINE_REPLY)
         }
-    }, [input, aiOnline, publishAi, push, executeAction])
+    }, [input, aiOnline, publishAi, push, executeAction, messages])
 
     const finalizeSlice = useCallback(() => {
         const rec = recordingRef.current
@@ -158,11 +166,16 @@ const AIPanel = ({
         const b64 = bytesToBase64(wav)
         push("user", `🎤 voice slice (${Math.round(wav.length / 32)}ms audio)`)
         if (aiOnline) {
-            publishAi({ type: "audio", role: "user", content: b64, sample_rate_hz: 16000 })
+            // Same history contract as handleSend (full conversation memory).
+            const history = messages
+                .filter(m => m.role === "user" || m.role === "assistant")
+                .slice(-50)
+                .map(m => ({ role: m.role, content: m.content }))
+            publishAi({ type: "audio", role: "user", content: b64, sample_rate_hz: 16000, history })
         } else {
             push("assistant", "I can't hear you in offline mode — try typing or an action button.")
         }
-    }, [push, aiOnline, publishAi])
+    }, [push, aiOnline, publishAi, messages])
     const startMic = useCallback(async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({

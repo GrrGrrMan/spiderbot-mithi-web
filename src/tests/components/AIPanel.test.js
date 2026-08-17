@@ -90,11 +90,14 @@ describe("AIPanel", () => {
             />
         )
         typeAndSend("hello robot")
-        expect(publishAi).toHaveBeenCalledWith({
-            type: "text",
-            role: "user",
-            content: "hello robot",
-        })
+        expect(publishAi).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "text",
+                role: "user",
+                content: "hello robot",
+                history: expect.any(Array),
+            })
+        )
         expect(publishImmediate).not.toHaveBeenCalled()
     })
 
