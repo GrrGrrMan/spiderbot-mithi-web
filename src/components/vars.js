@@ -201,6 +201,7 @@ const PATH_LINKS = [
     PATHS.sensors,
     PATHS.audio,
     PATHS.ai,
+    PATHS.presets,
     PATHS.landingPage,
 ].filter(l => !l.hidden)
 
