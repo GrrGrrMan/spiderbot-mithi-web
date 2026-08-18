@@ -104,6 +104,60 @@ describe("AIPanel", () => {
         expect(publishImmediate).not.toHaveBeenCalled()
     })
 
+    // Regression for the "I'm running in offline mode while the health row says
+    // AI online" bug: a transient "busy" heartbeat (emitted by ai_service.py
+    // _status_loop every 5s while the RPi worker is processing a prior message)
+    // used to be misclassified as offline by `aiOnline = state === "online"`,
+    // silently dropping the user's message from the MQTT path and emitting the
+    // misleading OFFLINE_REPLY. The RPi worker queue (maxsize=16) serializes
+    // the next message, so "busy" is online-enough to queue. (fix 2026-08-18)
+    test("busy heartbeat still routes to the AI service (not OFFLINE_REPLY)", () => {
+        const publishAi = jest.fn()
+        const publishImmediate = jest.fn()
+        render(
+            <AIPanel
+                {...makeProps({
+                    publishAi,
+                    publishImmediate,
+                    aiStatus: { state: "busy", llm: { provider: "groq", model: "llama-3.3-70b-versatile" } },
+                })}
+            />
+        )
+        typeAndSend("hello robot")
+        expect(publishAi).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: "text",
+                role: "user",
+                content: "hello robot",
+                history: expect.any(Array),
+            })
+        )
+        expect(publishImmediate).not.toHaveBeenCalled()
+        // The misleading "I'm running in offline mode right now…" must NOT appear
+        // in the chat while the RPi is merely busy:
+        expect(screen.queryByText(/offline mode/)).not.toBeInTheDocument()
+    })
+
+    test("error heartbeat falls back to the offline path (not the MQTT path)", () => {
+        // Defensive: "error" must NOT route to publishAi (would queue work for
+        // a service that's declared itself broken). Offline fallback is right.
+        const publishAi = jest.fn()
+        const publishImmediate = jest.fn()
+        render(
+            <AIPanel
+                {...makeProps({
+                    publishAi,
+                    publishImmediate,
+                    aiStatus: { state: "error", llm: { provider: "groq", model: "x" } },
+                })}
+            />
+        )
+        typeAndSend("tell me a joke")
+        expect(publishAi).not.toHaveBeenCalled()
+        expect(screen.getByText(/offline mode/)).toBeInTheDocument()
+    })
+
+
     test("health indicator reflects online state", () => {
         render(<AIPanel {...makeProps({ aiStatus: { state: "online", llm: { provider: "groq", model: "x" } } })} />)
         expect(screen.getByText("AI online")).toBeInTheDocument()
