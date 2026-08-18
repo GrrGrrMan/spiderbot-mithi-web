@@ -1,6 +1,6 @@
 # Web-UI Relevant Scripts Collection
 # Generated from: D:\Projects\hexapod-workspaces\V2\web-ui
-# Total files: 117
+# Total files: 118
 #
 
 ================================================================================
@@ -58,6 +58,101 @@
         "webpack-bundle-analyzer": "^3.8.0"
     }
 }
+
+================================================================================
+# FILE: public\audio-processor.js
+================================================================================
+
+// web-ui/public/audio-processor.js
+// AudioWorkletProcessor running on the dedicated Web Audio rendering thread.
+// Collects 128-sample blocks, computes block RMS for silence/VAD,
+// and streams assembled audio slices to the main thread via MessagePort.
+
+class VoiceCaptureProcessor extends AudioWorkletProcessor {
+    constructor(options) {
+        super()
+        const opts = (options && options.processorOptions) || {}
+        this.sampleRate = opts.sampleRate || 48000
+        this.silenceRms = opts.silenceRms || 0.02
+        this.silentBlocksForEnd = opts.silentBlocksForEnd || 30 // ~0.8s of silence @ 128 blocks
+        this.maxSliceSamples = opts.maxSliceMs
+            ? Math.floor((opts.maxSliceMs * this.sampleRate) / 1000)
+            : Math.floor(2.5 * this.sampleRate) // 2.5s maximum slice
+
+        this.buffer = []
+        this.silentBlocks = 0
+        this.totalSamples = 0
+
+        this.port.onmessage = (e) => {
+            if (e.data && e.data.command === "flush") {
+                this.flush(true)
+            }
+        }
+    }
+
+    process(inputs, outputs, parameters) {
+        const input = inputs[0]
+        if (!input || !input[0] || input[0].length === 0) {
+            return true
+        }
+
+        const channelData = input[0]
+        const len = channelData.length
+
+        // Clone incoming 128-sample block
+        const copy = new Float32Array(len)
+        copy.set(channelData)
+        this.buffer.push(copy)
+        this.totalSamples += len
+
+        // Compute Root-Mean-Square (RMS) for silence / VAD detection
+        let sum = 0
+        for (let i = 0; i < len; i++) {
+            sum += channelData[i] * channelData[i]
+        }
+        const rms = Math.sqrt(sum / len)
+
+        if (rms < this.silenceRms) {
+            this.silentBlocks++
+        } else {
+            this.silentBlocks = 0
+        }
+
+        const hasMinSpeech = this.totalSamples >= (0.4 * this.sampleRate)
+        const silenceDetected = this.silentBlocks >= this.silentBlocksForEnd && hasMinSpeech
+        const maxDurationExceeded = this.totalSamples >= this.maxSliceSamples
+
+        if (silenceDetected || maxDurationExceeded) {
+            this.flush(false)
+        }
+
+        return true
+    }
+
+    flush(forced) {
+        if (this.totalSamples === 0) return
+
+        const joined = new Float32Array(this.totalSamples)
+        let offset = 0
+        for (let i = 0; i < this.buffer.length; i++) {
+            joined.set(this.buffer[i], offset)
+            offset += this.buffer[i].length
+        }
+
+        this.port.postMessage({
+            type: "audio_slice",
+            samples: joined,
+            sampleRate: this.sampleRate,
+            forced: forced
+        })
+
+        this.buffer = []
+        this.totalSamples = 0
+        this.silentBlocks = 0
+    }
+}
+
+registerProcessor("voice-capture-processor", VoiceCaptureProcessor)
 
 ================================================================================
 # FILE: public\index.html
@@ -297,23 +392,22 @@ function App() {
                 <div id="plot" className="border" hidden={!inHexapodPage}>
                     {inHexapodPage && (
                         <ViewportToggle
-                            activeView={activeView}
+                            activeView={activeView}processor
                             onChange={setActiveView}
                         />
                     )}
                     {activeView === "cam" ? (
-                                            <CameraView
-                                                config={camConfig}
-                                                telemetry={camTelemetry}
-                                                isConnected={isConnected}
-                                            />
-                                        ) : (
-                                            <HexapodPlot
-                                                revision={revision}
-                                                hexapod={hexapod}
-                                                telemetry={telemetry} // <--- ADD THIS LINE
-                                            />
-                                        )}
+                        <CameraView
+                            config={camConfig}
+                            telemetry={camTelemetry}
+                            isConnected={isConnected}
+                        />
+                    ) : (
+                        <HexapodPlot
+                            revision={revision}
+                            hexapod={hexapod}
+                        />
+                    )}
                 </div>
             </div>
 
@@ -348,17 +442,11 @@ import {
     ForwardKinematicsPage,
     LegPatternPage,
     LandingPage,
-    CameraPanel,
     SensorPanel,
     AudioPanel,
     AIPanel,
     PresetsPage,
 } from "./components/pages"
-
-// P2 Phase B: CameraPanel is still re-exported from ./components/pages for
-// back-compat, but is no longer routed — the camera lives inside #plot as a
-// stage viewport mode. The Redirect above turns /camera into /?view=camera.
-const _cameraPanelKeptForBackCompat = CameraPanel
 
 const UPDATE_TYPES = {
     DEFAULT: "default",
@@ -385,10 +473,6 @@ const Page = ({ pageComponent }) => (
             {pageComponent(WalkingGaitsPage)}
         </Route>
         <Route path={PATHS.camera.path} exact>
-            {/* P2 Phase B: the camera is a stage viewport mode inside #plot,
-                not a nav page. Redirect deep-links to /?view=camera so the
-                App-level activeView state picks them up. The CameraPanel
-                placeholder is kept as the legacy file but no longer routed. */}
             <Redirect to={{ pathname: "/", search: "?view=camera" }} />
         </Route>
         <Route path={PATHS.sensors.path} exact>
@@ -562,8 +646,9 @@ export default DimensionsWidget
 import React from "react"
 import createPlotlyComponent from "react-plotly.js/factory"
 import * as defaults from "../templates"
-import getNewPlotParams from "../templates/plotter"
+import getNewPlotParams, { getTargetTraceUpdates, getGhostTraceUpdates } from "../templates/plotter"
 import VirtualHexapod from "../hexapod/VirtualHexapod"
+import { tRotZmatrix } from "../hexapod/geometry"
 
 class HexapodPlot extends React.Component {
     cameraView = defaults.CAMERA_VIEW
@@ -571,12 +656,12 @@ class HexapodPlot extends React.Component {
     Plot = null
     Plotly = null
     graphDiv = null
+    latestGhostPose = null
 
     shouldComponentUpdate(nextProps, nextState) {
         return (
             nextProps.revision !== this.props.revision ||
             nextProps.hexapod !== this.props.hexapod ||
-            nextProps.telemetry?.pose !== this.props.telemetry?.pose || // Trigger on new physical telemetry
             nextState.ready !== this.state.ready
         )
     }
@@ -587,36 +672,68 @@ class HexapodPlot extends React.Component {
 
     componentDidMount() {
         import("plotly.js-gl3d-dist-min").then(Plotly => {
-            this.Plotly = Plotly // Save reference to Plotly core
+            this.Plotly = Plotly
             this.Plot = createPlotlyComponent(Plotly)
             this.setState({ ready: true })
         })
         
-        // Phase 2: Listen for 60FPS Web Worker updates bypassing React state
         window.addEventListener("hexapod-anim-frame", this.handleAnimFrame)
+        window.addEventListener("hexapod-telemetry-frame", this.handleTelemetryFrame)
     }
 
     componentWillUnmount() {
         window.removeEventListener("hexapod-anim-frame", this.handleAnimFrame)
+        window.removeEventListener("hexapod-telemetry-frame", this.handleTelemetryFrame)
     }
 
     handleAnimFrame = (e) => {
-        if (!this.Plotly || !this.graphDiv || !this.props.hexapod) return
+        if (!this.Plotly || !this.Plotly.restyle || !this.graphDiv || !this.props.hexapod) return
         
-        const pose = e.detail
+        const detail = e.detail
+        if (!detail) return
+
+        const pose = detail.pose || detail
+        if (!pose || typeof pose !== "object") return
         const dimensions = this.props.hexapod.dimensions
-        
-        // 1. Target frame
-        const animHexapod = new VirtualHexapod(dimensions, pose, { wontRotate: true })
-        
-        // 2. Physical Ghost frame (so it doesn't vanish during animations)
-        let ghostHexapod = null
-        if (this.props.telemetry?.pose) {
-            ghostHexapod = new VirtualHexapod(dimensions, this.props.telemetry.pose, { wontRotate: true })
+        if (!dimensions) return
+
+        try {
+            let animHexapod = new VirtualHexapod(dimensions, pose, { wontRotate: true })
+            if (!animHexapod || !animHexapod.body || !animHexapod.foundSolution) return
+            
+            // Apply 3D body heading twist if frame specifies rotation angle (turning/spinning)
+            if (typeof detail.twist === "number" && detail.twist !== 0) {
+                const matrix = tRotZmatrix(detail.twist)
+                animHexapod = animHexapod.cloneTrot(matrix)
+            } else if (detail.matrix) {
+                animHexapod = animHexapod.cloneTrot(detail.matrix)
+            }
+
+            const { update, indices } = getTargetTraceUpdates(animHexapod)
+            this.Plotly.restyle(this.graphDiv, update, indices)
+        } catch (err) {
+            console.warn("[HexapodPlot] Error applying anim frame:", err)
         }
-        
-        const [data, layout] = getNewPlotParams(animHexapod, this.cameraView, ghostHexapod)
-        this.Plotly.react(this.graphDiv, data, layout)
+    }
+
+    handleTelemetryFrame = (e) => {
+        if (!this.Plotly || !this.Plotly.restyle || !this.graphDiv || !this.props.hexapod) return
+
+        const pose = e.detail
+        if (!pose || typeof pose !== "object") return
+        this.latestGhostPose = pose
+        const dimensions = this.props.hexapod.dimensions
+        if (!dimensions) return
+
+        try {
+            const ghostHexapod = new VirtualHexapod(dimensions, pose, { wontRotate: true })
+            if (!ghostHexapod || !ghostHexapod.body || !ghostHexapod.foundSolution) return
+
+            const { update, indices } = getGhostTraceUpdates(ghostHexapod)
+            this.Plotly.restyle(this.graphDiv, update, indices)
+        } catch (err) {
+            console.warn("[HexapodPlot] Error applying telemetry frame:", err)
+        }
     }
 
     render() {
@@ -624,8 +741,12 @@ class HexapodPlot extends React.Component {
         if (!this.props.hexapod) return null
 
         let ghostHexapod = null
-        if (this.props.telemetry?.pose) {
-            ghostHexapod = new VirtualHexapod(this.props.hexapod.dimensions, this.props.telemetry.pose, { wontRotate: true })
+        if (this.latestGhostPose) {
+            try {
+                ghostHexapod = new VirtualHexapod(this.props.hexapod.dimensions, this.latestGhostPose, { wontRotate: true })
+            } catch (e) {
+                ghostHexapod = null
+            }
         }
 
         const [data, layout] = getNewPlotParams(this.props.hexapod, this.cameraView, ghostHexapod)
@@ -645,6 +766,7 @@ class HexapodPlot extends React.Component {
         return <Plot {...props} />
     }
 }
+
 export default HexapodPlot
 
 ================================================================================
@@ -1019,28 +1141,11 @@ export default StreamStatusBar
 ================================================================================
 
 // web-ui/src/components/camera/StreamViewport.js
-//
-// P2 Phase C fix (2026-08-16): transport switched from a bare no-cors <img>
-// pointed straight at the multipart stream to fetch() + ReadableStream MJPEG
-// parsing -> blob: URL per frame.
-//
-// WHY: Chromium fires <img>.onLoad once per CONNECTION (not per frame) for
-// multipart/x-mixed-replace, so the old onLoad-based FPS + stall watchdog mis-
-// fired on a healthy stream (FPS always "<1", spurious remounts, eventual false
-// "lost"). Parsing frames ourselves gives REAL per-frame events: honest FPS,
-// honest stall detection, and clean "lost"/recovery signalling to the parent
-// (which shows OfflinePlaceholder).
-//
-// Contract: url must be CORS-accessible (fetch). The CAM's :81/stream now emits
-// Access-Control-Allow-Origin: * (CameraServer.cpp). The boundary token is read
-// from the response Content-Type, so this parses both the mock fixture and the
-// ESP32 CameraServer wire format generically.
-
 import React, { useEffect, useRef, useState, useCallback } from "react"
 import StreamStatusBar from "./StreamStatusBar"
 
 const STALL_MS = 3000 // no frame for this long -> "stalled" badge
-const LOST_MS = 8000 // no frame for this long -> notify parent (placeholder)
+const LOST_MS = 8000  // no frame for this long -> notify parent (placeholder)
 const FPS_WINDOW_MS = 2000 // sliding window for the FPS EMA
 
 const StreamViewport = ({ url, isConnected, onStatus }) => {
@@ -1048,7 +1153,6 @@ const StreamViewport = ({ url, isConnected, onStatus }) => {
     const [stalled, setStalled] = useState(false)
     const [fps, setFps] = useState(0)
 
-    const genRef = useRef(0) // invalidates stale async work on url/unmount
     const aborterRef = useRef(null)
     const lastFrameRef = useRef(0)
     const emaFpsRef = useRef(0)
@@ -1070,18 +1174,22 @@ const StreamViewport = ({ url, isConnected, onStatus }) => {
             return undefined
         }
 
-        const gen = ++genRef.current
+        let isCancelled = false
         const ac = new AbortController()
         aborterRef.current = ac
 
         let buffer = "" // latin1 binary string; JPEG bytes map 1:1 to chars
-        const bytesToLatin1 = bytes => { let s = ""; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return s }
+        const bytesToLatin1 = bytes => {
+            let s = ""
+            for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i])
+            return s
+        }
         const frames = []
         let lastFrame = Date.now()
         let connected = false
 
         const pushFrame = bytes => {
-            if (genRef.current !== gen) return
+            if (isCancelled) return
             const now = Date.now()
             setBlobUrl(prev => {
                 if (prev) URL.revokeObjectURL(prev)
@@ -1114,7 +1222,7 @@ const StreamViewport = ({ url, isConnected, onStatus }) => {
         const run = async () => {
             try {
                 const res = await fetch(url, { signal: ac.signal })
-                if (genRef.current !== gen) return
+                if (isCancelled) return
                 if (!res.ok || !res.body) throw new Error(`stream HTTP ${res.status}`)
                 connected = true
 
@@ -1127,7 +1235,7 @@ const StreamViewport = ({ url, isConnected, onStatus }) => {
                 const reader = res.body.getReader()
                 for (;;) {
                     const { value, done } = await reader.read()
-                    if (genRef.current !== gen) return
+                    if (isCancelled) return
                     if (done) break
                     buffer += bytesToLatin1(value)
 
@@ -1152,17 +1260,16 @@ const StreamViewport = ({ url, isConnected, onStatus }) => {
                     }
                 }
             } catch (err) {
-                if (genRef.current !== gen) return
+                if (isCancelled) return
                 if (err && err.name === "AbortError") return
-                // Refused / reset before we ever got frames -> definitely lost.
                 if (!connected) notifyLost(true)
             }
         }
         run()
 
-        // Stall/lost watchdog over real frame-arrival timestamps.
+        // Watchdog over real frame-arrival timestamps
         const id = setInterval(() => {
-            if (genRef.current !== gen) return
+            if (isCancelled) return
             const gap = Date.now() - lastFrame
             if (gap > LOST_MS) {
                 setStalled(true)
@@ -1175,7 +1282,7 @@ const StreamViewport = ({ url, isConnected, onStatus }) => {
         }, 1000)
 
         return () => {
-            genRef.current++
+            isCancelled = true
             ac.abort()
             clearInterval(id)
             setBlobUrl(prev => {
@@ -1185,7 +1292,6 @@ const StreamViewport = ({ url, isConnected, onStatus }) => {
         }
     }, [url, notifyLost])
 
-    // url null, or never-arrived stream, or lost (parent owns the placeholder).
     if (!url || !blobUrl || lostRef.current) return null
 
     const wrapperStyle = {
@@ -2338,69 +2444,21 @@ export default RandomRobotGif
 ================================================================================
 
 // web-ui/src/components/pages/AIPanel.js
-// P5 — AI voice layer: chat + mic (STT) + action cards + AI service health.
-// Drives: hexapod/{id}/ai (text + base64 WAV audio) via publishAi,
-//         hexapod/cmd (motion/system actions) via publishImmediate,
-//         hexapod/{id}/audio (speaker quick-actions) via publishAudio.
 import React, { useState, useEffect, useRef, useCallback } from "react"
 import AI_ACTIONS from "../../constants/aiActions.json"
 import { SECTION_NAMES } from "../vars"
-import { buildWav, to16kPcm, bytesToBase64, blockRms } from "../../utils/aiAudio"
+import { buildWav, to16kPcm, bytesToBase64, VOICE_PROCESSOR_CODE } from "../../utils/aiAudio"
 import { matchAction } from "../../utils/aiActionMatcher"
 import { DEFAULT_POSE, DEFAULT_DIMENSIONS } from "../../templates"
 import { buildServoBatchPayload } from "../../utils/servoMapper"
-import { generatePresetFramesAsync } from "../../hexapod/solvers/motionSynthesizer"
+import { generatePresetFramesAsync, generateLocomotionFrames } from "../../hexapod/solvers/motionSynthesizer"
 import { usePoseFrameStream } from "../../hooks/usePoseFrameStream"
 
 const ACTIONS = AI_ACTIONS.actions
-const SILENCE_RMS = 0.02          // below this RMS = silence
-const SILENT_BLOCKS_FOR_END = 10  // ~0.85s @ 4096/48k blocks
-const MAX_SLICE_MS = 2500         // flush long speech every 2.5s
-const OFFLINE_REPLY = "I'm running in offline mode right now — try an action button!"
-const MAX_PERSISTED_MESSAGES = 200  // ~sessionStorage body cap; trim older
-
-const chatStorageKey = (deviceId) => `hexapod/ai-chat/${deviceId || "default"}`
-
-const loadChat = (deviceId) => {
-    try {
-        const raw = window.sessionStorage.getItem(chatStorageKey(deviceId))
-        if (!raw) return []
-        const parsed = JSON.parse(raw)
-        return Array.isArray(parsed) ? parsed : []
-    } catch (e) {
-        return []
-    }
-}
-
-const saveChat = (deviceId, messages) => {
-    try {
-        const trim = messages.slice(-MAX_PERSISTED_MESSAGES)
-        window.sessionStorage.setItem(chatStorageKey(deviceId), JSON.stringify(trim))
-    } catch (e) {
-        // sessionStorage full / disabled — silent; chat still works in-memory.
-    }
-}
+const SILENCE_RMS = 0.02
+const MAX_SLICE_MS = 2500
 
 const msgKey = m => `${m.role}|${m.type}|${m.content}`
-
-const healthOf = aiStatus => {
-    if (!aiStatus) return { label: "AI service: offline (deterministic mode)", color: "var(--c3-grey)" }
-    switch (aiStatus.state) {
-        case "online": return { label: "AI online", color: "var(--c1-green)" }
-        case "busy": return { label: "AI busy…", color: "var(--c4-amber)" }
-        case "error": return { label: "AI error", color: "var(--c6-red)" }
-        default: return { label: "AI offline", color: "var(--c3-grey)" }
-    }
-}
-
-const cacheHitRate = aiStatus => {
-    const c = aiStatus && aiStatus.llm && aiStatus.llm.cache
-    if (!c) return null
-    const total = (c.hits || 0) + (c.misses || 0)
-    if (total === 0) return "0/0 (—)"
-    const pct = Math.round((c.hits / total) * 100)
-    return `${c.hits}/${total} (${pct}%)`
-}
 
 const AIPanel = ({
     publishImmediate = () => {},
@@ -2411,49 +2469,78 @@ const AIPanel = ({
     audioStatus = null,
     isConnected = false,
     onMount = () => {},
-    aiDeviceId = "default",
+    aiDeviceId = "hexapod-s3-01",
     clearAiMessages = () => {},
     params = {},
     onUpdate = () => {}
 }) => {
-    const [messages, setMessages] = useState(() => loadChat(aiDeviceId))
+    // Ephemeral in-memory chat state: strictly resets on page reload
+    const [messages, setMessages] = useState([])
     const [input, setInput] = useState("")
     const [recording, setRecording] = useState(false)
     const [micBlocked, setMicBlocked] = useState(false)
+    const [activeFrames, setActiveFrames] = useState([])
+    const [activeExecutingAction, setActiveExecutingAction] = useState(null)
 
     const chatRef = useRef(null)
     const recordingRef = useRef({})
-
-    const [presetFrames, setPresetFrames] = useState([])
     const lastDirectiveKeyRef = useRef(null)
+    const activeReqIdRef = useRef(0)
 
-    const aiOnline = aiStatus && aiStatus.state !== "offline" && aiStatus.state !== "error"
-    const health = healthOf(aiStatus)
+    const aiOnline = Boolean(aiStatus && aiStatus.state !== "offline" && aiStatus.state !== "error")
 
-    const publishPresetPose = useCallback(
-        pose => publishImmediate("hexapod/cmd", buildServoBatchPayload(pose)),
+    const publishLivePose = useCallback(
+        pose => {
+            if (pose && typeof pose === "object") {
+                publishImmediate("hexapod/cmd", buildServoBatchPayload(pose))
+            }
+        },
         [publishImmediate]
     )
 
-    // Phase 2 / Clean Single Declaration
-    const { stop: stopPreset } = usePoseFrameStream(presetFrames, publishPresetPose, {
-        onComplete: (finalPose) => {
-            onUpdate("pose", { pose: finalPose })
+    const { stop: stopStream } = usePoseFrameStream(activeFrames, publishLivePose, {
+        onComplete: finalPose => {
+            if (finalPose && typeof finalPose === "object") {
+                onUpdate("pose", { pose: finalPose })
+            }
+            setActiveExecutingAction(null)
+            setActiveFrames([])
         }
     })
 
     const playPreset = useCallback(
         presetName => {
             if (!presetName) return
-            stopPreset()
+            stopStream()
+            setActiveExecutingAction(presetName)
+            const reqId = ++activeReqIdRef.current
             const dims = (params && params.dimensions) || DEFAULT_DIMENSIONS
             const startPose = (params && params.pose) || DEFAULT_POSE
             
             generatePresetFramesAsync(presetName, dims, 3, startPose, 30).then(frames => {
-                setPresetFrames(frames)
+                if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
+                    setActiveFrames(frames)
+                }
             })
         },
-        [params, stopPreset]
+        [params, stopStream]
+    )
+
+    const playLocomotion = useCallback(
+        (actionId, durationMs = 3000) => {
+            stopStream()
+            setActiveExecutingAction(actionId)
+            const reqId = ++activeReqIdRef.current
+            const dims = (params && params.dimensions) || DEFAULT_DIMENSIONS
+            const startPose = (params && params.pose) || DEFAULT_POSE
+
+            generateLocomotionFrames(actionId, dims, durationMs, startPose).then(frames => {
+                if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
+                    setActiveFrames(frames)
+                }
+            })
+        },
+        [params, stopStream]
     )
 
     useEffect(() => {
@@ -2477,17 +2564,20 @@ const AIPanel = ({
         const key = `${aiMessages.length}|${msgKey(last)}`
         if (lastDirectiveKeyRef.current === key) return
         lastDirectiveKeyRef.current = key
+
         const a = ACTIONS.find(x => x.id === last.action_id)
-        if (a && a.payload && a.payload.type === "preset") playPreset(a.payload.preset)
-    }, [aiMessages, playPreset])
+        if (a) {
+            if (a.payload && a.payload.type === "preset") {
+                playPreset(a.payload.preset)
+            } else if (a.payload && a.payload.type === "motion") {
+                playLocomotion(a.id, a.duration_ms || 3000)
+            }
+        }
+    }, [aiMessages, playPreset, playLocomotion])
 
     useEffect(() => {
         if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
     }, [messages])
-
-    useEffect(() => {
-        saveChat(aiDeviceId, messages)
-    }, [messages, aiDeviceId])
 
     const push = useCallback((role, content, type = "text") => {
         setMessages(prev => [...prev, { role, type, content, ts: Date.now() }])
@@ -2496,30 +2586,44 @@ const AIPanel = ({
     const clearChat = useCallback(() => {
         setMessages([])
         clearAiMessages()
-        try { window.sessionStorage.removeItem(chatStorageKey(aiDeviceId)) } catch (e) { /* ignore */ }
-    }, [aiDeviceId, clearAiMessages])
+    }, [clearAiMessages])
 
     const executeAction = useCallback(action => {
-        const { payload, topic, duration_ms, reply } = action
+        const { payload, topic, duration_ms, reply, name, id } = action
+        setActiveExecutingAction(name)
+
         if (topic === "audio") {
             publishAudio(payload)
+            setActiveExecutingAction(null)
         } else if (payload && payload.type === "preset") {
             playPreset(payload.preset)
+        } else if (payload && payload.type === "motion") {
+            publishImmediate("hexapod/cmd", payload)
+            if (id === "stop") {
+                stopStream()
+                setActiveExecutingAction(null)
+                onUpdate("pose", { pose: DEFAULT_POSE })
+            } else {
+                playLocomotion(id, duration_ms || 3000)
+                if (duration_ms > 0) {
+                    setTimeout(() => {
+                        publishImmediate("hexapod/cmd", { ...payload, vx: 0, vy: 0, omega: 0 })
+                    }, duration_ms)
+                }
+            }
         } else {
             publishImmediate("hexapod/cmd", payload)
-            if (duration_ms > 0) {
-                const stopPayload = { ...payload, vx: 0, vy: 0, omega: 0 }
-                setTimeout(() => publishImmediate("hexapod/cmd", stopPayload), duration_ms)
-            }
+            setActiveExecutingAction(null)
         }
-        push("assistant", reply)
-    }, [publishAudio, publishImmediate, push, playPreset])
+        push("assistant", reply || `Triggered action: ${name}`)
+    }, [publishAudio, publishImmediate, push, playPreset, playLocomotion, stopStream, onUpdate])
 
     const handleSend = useCallback(() => {
         const text = input.trim()
         if (!text) return
         push("user", text)
         setInput("")
+
         if (aiOnline) {
             const history = messages
                 .filter(m => m.role === "user" || m.role === "assistant")
@@ -2528,27 +2632,21 @@ const AIPanel = ({
             publishAi({ type: "text", role: "user", content: text, history })
             return
         }
+
         const action = matchAction(text, ACTIONS)
         if (action) {
             executeAction(action)
         } else {
-            push("assistant", OFFLINE_REPLY)
+            push("system", "AI Service Offline: No LLM connected on hexapod/" + aiDeviceId + "/ai. Connect the Pi-Hub or select a command button below.")
         }
-    }, [input, aiOnline, publishAi, push, executeAction, messages])
+    }, [input, aiOnline, publishAi, push, executeAction, messages, aiDeviceId])
 
-    const finalizeSlice = useCallback(() => {
-        const rec = recordingRef.current
-        if (!rec.accum || rec.accum.length === 0) return
-        const joined = new Float32Array(rec.accum.reduce((n, c) => n + c.length, 0))
-        let off = 0
-        for (const c of rec.accum) { joined.set(c, off); off += c.length }
-        rec.accum = []
-        rec.silentBlocks = 0
-
-        const pcm = to16kPcm(joined, rec.sampleRate)
+    const handleAudioSlice = useCallback((samples, sampleRate) => {
+        const pcm = to16kPcm(samples, sampleRate)
         const wav = buildWav(pcm, 16000)
         const b64 = bytesToBase64(wav)
-        push("user", `🎤 voice slice (${Math.round(wav.length / 32)}ms audio)`)
+        push("user", `🎤 Voice Query (${Math.round(wav.length / 32)}ms audio)`)
+        
         if (aiOnline) {
             const history = messages
                 .filter(m => m.role === "user" || m.role === "assistant")
@@ -2556,7 +2654,7 @@ const AIPanel = ({
                 .map(m => ({ role: m.role, content: m.content }))
             publishAi({ type: "audio", role: "user", content: b64, sample_rate_hz: 16000, history })
         } else {
-            push("assistant", "I can't hear you in offline mode — try typing or an action button.")
+            push("system", "AI Service Offline: Voice transcription and LLM reasoning require the Pi-Hub service. Action buttons below remain active.")
         }
     }, [push, aiOnline, publishAi, messages])
 
@@ -2568,178 +2666,353 @@ const AIPanel = ({
             const AudioCtx = window.AudioContext || window.webkitAudioContext
             const ctx = new AudioCtx()
             const source = ctx.createMediaStreamSource(stream)
-            const processor = ctx.createScriptProcessor(4096, 1, 1)
-            const gain = ctx.createGain()
-            gain.gain.value = 0 // silent monitor (no speaker echo)
-            source.connect(processor)
-            processor.connect(gain)
-            gain.connect(ctx.destination)
 
-            const rec = recordingRef.current
-            rec.ctx = ctx
-            rec.stream = stream
-            rec.accum = []
-            rec.silentBlocks = 0
-            rec.sampleRate = ctx.sampleRate || 48000
-            rec.lastFlush = Date.now()
+            const blob = new Blob([VOICE_PROCESSOR_CODE], { type: "application/javascript" })
+            const workletUrl = URL.createObjectURL(blob)
+            await ctx.audioWorklet.addModule(workletUrl)
+            URL.revokeObjectURL(workletUrl)
 
-            processor.onaudioprocess = e => {
-                const channel = e.inputBuffer.getChannelData(0)
-                rec.accum.push(new Float32Array(channel))
-                const rms = blockRms(channel)
-                rec.silentBlocks = rms < SILENCE_RMS ? rec.silentBlocks + 1 : 0
+            const workletNode = new AudioWorkletNode(ctx, "voice-capture-processor", {
+                processorOptions: {
+                    sampleRate: ctx.sampleRate || 48000,
+                    silenceRms: SILENCE_RMS,
+                    maxSliceMs: MAX_SLICE_MS,
+                },
+            })
 
-                const now = Date.now()
-                const hasAudio =
-                    rec.accum.reduce((a, c) => a + c.length, 0) / rec.sampleRate
-                const silenceEnded =
-                    rec.silentBlocks >= SILENT_BLOCKS_FOR_END && hasAudio > 0.4
-                const sliceExpired =
-                    now - rec.lastFlush >= MAX_SLICE_MS && hasAudio >= 1.0
-                if (silenceEnded || sliceExpired) {
-                    rec.lastFlush = now
-                    finalizeSlice()
+            workletNode.port.onmessage = e => {
+                if (e.data && e.data.type === "audio_slice") {
+                    handleAudioSlice(e.data.samples, e.data.sampleRate)
                 }
             }
 
-            rec.processor = processor
+            source.connect(workletNode)
+            recordingRef.current = { ctx, stream, workletNode }
             setRecording(true)
             setMicBlocked(false)
         } catch (err) {
             console.error("[AIPanel] Mic error:", err)
             setMicBlocked(true)
         }
-    }, [finalizeSlice])
+    }, [handleAudioSlice])
 
     const stopMic = useCallback(() => {
         const rec = recordingRef.current
-        if (rec.processor) rec.processor.disconnect()
-        if (rec.stream) rec.stream.getTracks().forEach(t => t.stop())
-        if (rec.ctx) rec.ctx.close().catch(() => {})
-        finalizeSlice()
+        if (rec.workletNode) {
+            rec.workletNode.port.postMessage({ command: "flush" })
+            rec.workletNode.disconnect()
+        }
+        if (rec.stream) {
+            rec.stream.getTracks().forEach(t => t.stop())
+        }
+        if (rec.ctx) {
+            rec.ctx.close().catch(() => {})
+        }
         recordingRef.current = {}
         setRecording(false)
-    }, [finalizeSlice])
+    }, [])
+
+    const stopAll = () => {
+        stopStream()
+        activeReqIdRef.current++
+        setActiveExecutingAction(null)
+        setActiveFrames([])
+        publishImmediate("hexapod/cmd", { type: "motion", vx: 0, vy: 0, omega: 0 })
+        onUpdate("pose", { pose: DEFAULT_POSE })
+    }
+
+    const movementActions = ACTIONS.filter(a => ["walk_forward", "walk_backward", "turn_left", "turn_right", "spin", "stop"].includes(a.id))
+    const presetActions = ACTIONS.filter(a => a.payload && a.payload.type === "preset")
+    const audioActions = ACTIONS.filter(a => a.topic === "audio")
+    const systemActions = ACTIONS.filter(a => ["freeze", "wake"].includes(a.id))
 
     return (
-        <div className="border" style={{ margin: "10px", padding: "10px" }}>
-            <h2 style={{ marginTop: 0 }}>AI Assistant</h2>
-
-            <div style={{ display: "flex", gap: "14px", alignItems: "center", fontSize: "0.72rem", marginBottom: "8px" }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
-                    <span style={{ width: 9, height: 9, borderRadius: "50%", background: health.color, display: "inline-block" }} />
-                    {health.label}
-                </span>
-                <span>
-                    STT local · TTS local · LLM {aiStatus && aiStatus.llm ? `${aiStatus.llm.provider}:${aiStatus.llm.model}` : "—"}
-                    {cacheHitRate(aiStatus) && (
-                        <span title="LLM response cache hit rate (RPi)"> · cache {cacheHitRate(aiStatus)}</span>
+        <div className="border" style={{ margin: "10px", padding: "12px", background: "rgba(15, 23, 42, 0.65)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                <h2 style={{ margin: 0, fontSize: "1.3rem", color: "var(--c1-green)" }}>
+                    AI Assistant & Direct Actions
+                </h2>
+                <div style={{ display: "flex", gap: "6px" }}>
+                    {activeExecutingAction && (
+                        <span style={{ 
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "5px",
+                            padding: "2px 8px", 
+                            borderRadius: "10px", 
+                            background: "rgba(252, 66, 123, 0.2)",
+                            border: "1px solid var(--c2-pink)",
+                            color: "var(--c2-pink)",
+                            fontSize: "0.65rem" 
+                        }}>
+                            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--c2-pink)", animation: "pulse 1s infinite" }} />
+                            Active: {activeExecutingAction}
+                        </span>
                     )}
-                </span>
-                <span style={{ color: audioStatus && audioStatus.state === "playing" ? "var(--c4-amber)" : "inherit" }}>
-                    {audioStatus && audioStatus.state === "playing" ? "🔊 speaking…" : "speaker idle"}
-                </span>
-                {!isConnected && <span style={{ color: "var(--c6-red)" }}>MQTT disconnected</span>}
-                <span style={{ marginLeft: "auto" }}>
                     <button
                         type="button"
                         onClick={clearChat}
-                        style={{ ...btnStyle, padding: "2px 6px", fontSize: "0.7rem" }}
-                        title="Clear chat history (sessionStorage)"
+                        style={{ ...btnStyle, padding: "2px 8px", fontSize: "0.65rem" }}
                         disabled={messages.length === 0}
                     >
-                        Clear
+                        Clear Chat
                     </button>
-                </span>
+                </div>
             </div>
 
-            <div ref={chatRef} style={{ height: 200, overflowY: "auto", border: "1px solid var(--c3-grey)", borderRadius: 4, padding: "8px", marginBottom: "8px" }}>
+            {/* Honest Health Status Bar */}
+            <div style={{ 
+                display: "flex", 
+                flexWrap: "wrap", 
+                gap: "12px", 
+                alignItems: "center", 
+                padding: "6px 10px", 
+                borderRadius: "6px", 
+                background: aiOnline ? "rgba(50, 255, 126, 0.1)" : "rgba(255, 33, 33, 0.1)",
+                border: `1px solid ${aiOnline ? "rgba(50, 255, 126, 0.3)" : "rgba(255, 33, 33, 0.3)"}`,
+                fontSize: "0.72rem", 
+                marginBottom: "10px" 
+            }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", fontWeight: "bold" }}>
+                    <span style={{ 
+                        width: 8, 
+                        height: 8, 
+                        borderRadius: "50%", 
+                        background: aiOnline ? "var(--c1-green)" : "var(--c6-red)", 
+                        display: "inline-block" 
+                    }} />
+                    {aiOnline ? "AI Service: Online" : "AI Service: Offline (Direct Hardware Mode)"}
+                </span>
+
+                <span style={{ color: "#94a3b8" }}>
+                    {aiStatus && aiStatus.llm ? `LLM: ${aiStatus.llm.provider}:${aiStatus.llm.model}` : "LLM: Offline"}
+                </span>
+
+                <span style={{ color: audioStatus && audioStatus.state === "playing" ? "var(--c2-pink)" : "#94a3b8" }}>
+                    {audioStatus && audioStatus.state === "playing" ? "🔊 S3 Speaker: Playing" : "🔊 S3 Speaker: Idle"}
+                </span>
+
+                {!isConnected && (
+                    <span style={{ color: "var(--c6-red)", fontWeight: "bold" }}>
+                        ⚠️ MQTT Disconnected
+                    </span>
+                )}
+            </div>
+
+            {/* Conversation Terminal */}
+            <div 
+                ref={chatRef} 
+                style={{ 
+                    height: 170, 
+                    overflowY: "auto", 
+                    border: "1px solid rgba(41, 128, 185, 0.4)", 
+                    borderRadius: "6px", 
+                    padding: "8px", 
+                    marginBottom: "8px", 
+                    background: "rgba(10, 15, 25, 0.7)" 
+                }}
+            >
                 {messages.length === 0 && (
-                    <div className="label" style={{ textAlign: "center", paddingTop: 70 }}>
-                        Say something, or tap an action below.
+                    <div style={{ textAlign: "center", paddingTop: 55, color: "#64748b", fontSize: "0.75rem" }}>
+                        Click any action button below to animate the 3D model and command the robot.
                     </div>
                 )}
-                {messages.map((m, i) => (
-                    <div key={i} style={{ textAlign: m.role === "user" ? "right" : "left", marginBottom: 6 }}>
-                        <span
-                            style={{
-                                display: "inline-block",
-                                maxWidth: "85%",
-                                padding: "4px 8px",
-                                borderRadius: 8,
-                                background: m.role === "user" ? "var(--c4-amber)" : "var(--c2-purple)",
-                                color: "#fff",
-                                fontSize: "0.78rem",
-                                wordBreak: "break-word",
-                                whiteSpace: "pre-wrap",
-                            }}
-                        >
-                            {m.content}
-                        </span>
-                    </div>
-                ))}
+                {messages.map((m, i) => {
+                    const isUser = m.role === "user"
+                    const isSystem = m.role === "system"
+                    let bubbleBg = "rgba(41, 128, 185, 0.5)"
+                    let textColor = "#fff"
+
+                    if (isUser) {
+                        bubbleBg = "rgba(50, 255, 126, 0.2)"
+                        textColor = "var(--c1-green)"
+                    } else if (isSystem) {
+                        bubbleBg = "rgba(255, 33, 33, 0.15)"
+                        textColor = "#fca5a5"
+                    }
+
+                    return (
+                        <div key={i} style={{ textAlign: isUser ? "right" : "left", marginBottom: 6 }}>
+                            <span
+                                style={{
+                                    display: "inline-block",
+                                    maxWidth: "85%",
+                                    padding: "5px 10px",
+                                    borderRadius: "8px",
+                                    background: bubbleBg,
+                                    border: `1px solid ${isUser ? "rgba(50, 255, 126, 0.4)" : isSystem ? "rgba(255, 33, 33, 0.4)" : "rgba(41, 128, 185, 0.4)"}`,
+                                    color: textColor,
+                                    fontSize: "0.75rem",
+                                    wordBreak: "break-word",
+                                    whiteSpace: "pre-wrap",
+                                    textAlign: "left"
+                                }}
+                            >
+                                {m.content}
+                            </span>
+                        </div>
+                    )
+                })}
             </div>
 
-            <div style={{ display: "flex", gap: "6px", marginBottom: "10px" }}>
+            {/* Input Box */}
+            <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
                 <input
                     type="text"
                     value={input}
                     onChange={e => setInput(e.target.value)}
                     onKeyDown={e => e.key === "Enter" && handleSend()}
-                    placeholder="Type a command or question…"
-                    style={{ flex: 1, padding: "6px", borderRadius: 4, border: "1px solid var(--c3-grey)" }}
+                    placeholder={aiOnline ? "Ask AI assistant anything…" : "Type a direct command (e.g., 'walk forward')…"}
+                    style={{ flex: 1, padding: "6px 10px", borderRadius: "6px", border: "1px solid rgba(41, 128, 185, 0.5)", background: "rgba(10, 15, 25, 0.8)", color: "#fff", height: "2.2rem" }}
                     aria-label="AI input"
                 />
-                <button type="button" onClick={handleSend} style={btnStyle} disabled={!input.trim()}>
+                <button 
+                    type="button" 
+                    onClick={handleSend} 
+                    style={{ ...btnStyle, background: "var(--c4-blue)", color: "#fff", height: "2.2rem" }} 
+                    disabled={!input.trim()}
+                >
                     Send
                 </button>
                 <button
                     type="button"
                     onClick={recording ? stopMic : startMic}
-                    style={btnStyle}
+                    style={{ ...btnStyle, background: recording ? "var(--c6-red)" : "rgba(23, 33, 43, 0.9)", color: recording ? "#fff" : "var(--c1-green)", height: "2.2rem" }}
                     disabled={micBlocked}
-                    title={micBlocked ? "Microphone unavailable" : recording ? "Stop recording" : "Record voice"}
+                    title={micBlocked ? "Microphone unavailable" : recording ? "Stop recording" : "Record voice query"}
                 >
                     {recording ? "⏹ Stop" : "🎤 Talk"}
                 </button>
             </div>
-            {recording && (
-                <div className="label" style={{ color: "var(--c6-red)", marginBottom: 6 }}>
-                    ● Listening — speak now…
-                </div>
-            )}
-            {micBlocked && (
-                <div className="label" style={{ color: "var(--c6-red)", marginBottom: 6 }}>
-                    Mic unavailable or permission denied.
-                </div>
-            )}
 
-            <div className="label" style={{ fontWeight: "bold", marginBottom: 4 }}>Actions</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                {ACTIONS.map(a => (
-                    <button
-                        key={a.id}
-                        type="button"
-                        onClick={() => executeAction(a)}
-                        style={btnStyle}
-                        aria-label={a.name}
-                        title={a.keywords.join(", ")}
-                    >
-                        {a.name}
-                    </button>
-                ))}
+            {/* Categorized Direct Action Matrix */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {/* 1. Locomotion */}
+                <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                        <span style={{ fontSize: "0.7rem", fontWeight: "bold", color: "#94a3b8" }}>
+                            🚶 LOCOMOTION & GAITS (3D Animated)
+                        </span>
+                        {activeExecutingAction && (
+                            <button
+                                type="button"
+                                onClick={stopAll}
+                                style={{ ...btnStyle, padding: "2px 8px", fontSize: "0.65rem", borderColor: "var(--c6-red)", color: "var(--c6-red)" }}
+                            >
+                                ⏹ Emergency Stop
+                            </button>
+                        )}
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                        {movementActions.map(a => {
+                            const isRunning = activeExecutingAction === a.name || activeExecutingAction === a.id
+                            return (
+                                <button
+                                    key={a.id}
+                                    type="button"
+                                    onClick={() => executeAction(a)}
+                                    style={{
+                                        ...btnStyle,
+                                        borderColor: isRunning ? "var(--c1-green)" : "rgba(41, 128, 185, 0.5)",
+                                        background: isRunning ? "rgba(50, 255, 126, 0.15)" : btnStyle.background,
+                                        color: isRunning ? "var(--c1-green)" : btnStyle.color,
+                                    }}
+                                    aria-label={a.name}
+                                >
+                                    {a.name}
+                                </button>
+                            )
+                        })}
+                    </div>
+                </div>
+
+                {/* 2. Gestures */}
+                <div>
+                    <div style={{ fontSize: "0.7rem", fontWeight: "bold", color: "#94a3b8", marginBottom: "4px" }}>
+                        🎭 DYNAMIC GESTURE PRESETS (60FPS Interpolated)
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                        {presetActions.map(a => {
+                            const isRunning = activeExecutingAction === (a.payload && a.payload.preset)
+                            return (
+                                <button
+                                    key={a.id}
+                                    type="button"
+                                    onClick={() => executeAction(a)}
+                                    style={{
+                                        ...btnStyle,
+                                        borderColor: isRunning ? "var(--c1-green)" : "rgba(41, 128, 185, 0.5)",
+                                        background: isRunning ? "rgba(50, 255, 126, 0.15)" : btnStyle.background,
+                                        color: isRunning ? "var(--c1-green)" : btnStyle.color,
+                                    }}
+                                    aria-label={a.name}
+                                >
+                                    {a.name}
+                                </button>
+                            )
+                        })}
+                    </div>
+                </div>
+
+                {/* 3. Audio & System */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                    <div>
+                        <div style={{ fontSize: "0.7rem", fontWeight: "bold", color: "#94a3b8", marginBottom: "4px" }}>
+                            🔊 ACOUSTIC TONES
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                            {audioActions.map(a => (
+                                <button
+                                    key={a.id}
+                                    type="button"
+                                    onClick={() => executeAction(a)}
+                                    style={btnStyle}
+                                    aria-label={a.name}
+                                >
+                                    {a.name}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div>
+                        <div style={{ fontSize: "0.7rem", fontWeight: "bold", color: "#94a3b8", marginBottom: "4px" }}>
+                            ⚡ SYSTEM POWER
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                            {systemActions.map(a => (
+                                <button
+                                    key={a.id}
+                                    type="button"
+                                    onClick={() => executeAction(a)}
+                                    style={{
+                                        ...btnStyle,
+                                        borderColor: a.id === "freeze" ? "var(--c6-red)" : "var(--c1-green)",
+                                        color: a.id === "freeze" ? "var(--c6-red)" : "var(--c1-green)",
+                                    }}
+                                    aria-label={a.name}
+                                >
+                                    {a.name}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     )
 }
 
 const btnStyle = {
-    padding: "5px 10px",
-    borderRadius: 4,
-    border: "1px solid var(--c3-grey)",
-    background: "var(--c0-bg)",
+    padding: "5px 9px",
+    borderRadius: "5px",
+    border: "1px solid rgba(41, 128, 185, 0.5)",
+    background: "rgba(23, 33, 43, 0.85)",
+    color: "#e2e8f0",
     cursor: "pointer",
-    fontSize: "0.75rem",
+    fontSize: "0.72rem",
+    fontWeight: "500",
+    transition: "all 0.15s ease",
 }
 
 export default AIPanel
@@ -3066,13 +3339,7 @@ export default LegPatternPage
 ================================================================================
 
 // web-ui/src/components/pages/PresetsPage.js
-// Chunk 2 — "custom animation interpolation + presets" restored from the legacy
-// hexapod web-ui. Each button streams a cosine-eased keyframe animation through
-// the normal servo payload path ({type:"pose", pose}) via usePoseFrameStream —
-// ZERO firmware changes.
-//
-// Nav entry: unveiled 2026-08-18 (PATHS.presets.hidden = false in components/vars.js).
-import React, { useState, useCallback, useEffect } from "react"
+import React, { useState, useCallback, useEffect, useRef } from "react"
 import { SECTION_NAMES } from "../vars"
 import { DEFAULT_POSE, DEFAULT_DIMENSIONS } from "../../templates"
 import { generatePresetFramesAsync } from "../../hexapod/solvers/motionSynthesizer"
@@ -3080,30 +3347,28 @@ import { buildServoBatchPayload } from "../../utils/servoMapper"
 import { usePoseFrameStream } from "../../hooks/usePoseFrameStream"
 
 const PRESETS = [
-    { name: "wave", label: "Wave" },
-    { name: "cheer", label: "Cheer" },
-    { name: "lookAround", label: "Look Around" },
-    { name: "stretch", label: "Stretch" },
-    { name: "pushups", label: "Push-ups" },
-    { name: "bow", label: "Bow" },
-    { name: "dance", label: "Dance" },
+    { name: "wave", label: "Wave", category: "Greeting", icon: "🌊", desc: "Single front leg wave" },
+    { name: "cheer", label: "Cheer", category: "Greeting", icon: "🎉", desc: "Dual front leg celebration" },
+    { name: "lookAround", label: "Look Around", category: "Survey", icon: "🔭", desc: "3D Torso orientation sweep" },
+    { name: "stretch", label: "Stretch", category: "Agility", icon: "🤸", desc: "Multi-axis full stance limbering" },
+    { name: "pushups", label: "Push-ups", category: "Agility", icon: "💪", desc: "Vertical body dips" },
+    { name: "bow", label: "Bow", category: "Social", icon: "🙇", desc: "Formal forward pitch bow" },
+    { name: "dance", label: "Dance", category: "Social", icon: "💃", desc: "Rhythmic sway and body roll" },
+    { name: "standUp", label: "Stand Tall", category: "Stance", icon: "🧍", desc: "Maximum height stance" },
+    { name: "sitDown", label: "Sit Down", category: "Stance", icon: "🧎", desc: "Low clearance stance" },
 ]
 
-const btnStyle = {
-    padding: "5px 10px",
-    borderRadius: 4,
-    border: "1px solid var(--c3-grey)",
-    background: "var(--c0-bg)",
-    cursor: "pointer",
-    fontSize: "0.75rem",
-}
-
-// Added onUpdate to the destructured props here!
-const PresetsPage = ({ onMount = () => {}, onUpdate = () => {}, publishThrottled = () => {}, params = {} }) => {
+const PresetsPage = ({
+    onMount = () => {},
+    onUpdate = () => {},
+    publishThrottled = () => {},
+    params = {},
+}) => {
     const dimensions = (params && params.dimensions) || DEFAULT_DIMENSIONS
     const startPose = (params && params.pose) || DEFAULT_POSE
     const [frames, setFrames] = useState([])
     const [activePreset, setActivePreset] = useState(null)
+    const activeReqIdRef = useRef(0)
 
     useEffect(() => {
         onMount(SECTION_NAMES.presets)
@@ -3111,64 +3376,125 @@ const PresetsPage = ({ onMount = () => {}, onUpdate = () => {}, publishThrottled
     }, [])
 
     const publishPose = useCallback(
-        pose => publishThrottled("hexapod/cmd", buildServoBatchPayload(pose)),
+        pose => {
+            if (pose && typeof pose === "object") {
+                publishThrottled("hexapod/cmd", buildServoBatchPayload(pose))
+            }
+        },
         [publishThrottled]
     )
 
-    // Phase 2: Sync global App state only when the 60FPS animation completes
     const { stop } = usePoseFrameStream(frames, publishPose, {
-        onComplete: (finalPose) => {
-            onUpdate("pose", { pose: finalPose })
-        }
+        onComplete: finalPose => {
+            if (finalPose && typeof finalPose === "object") {
+                onUpdate("pose", { pose: finalPose })
+            }
+            setActivePreset(null)
+        },
     })
 
-    // This is the play function that was missing!
     const play = name => {
         stop()
         setActivePreset(name)
-        // Phase 1 Async Web Worker Quintic offload
+        const reqId = ++activeReqIdRef.current
+
         generatePresetFramesAsync(name, dimensions, 3, startPose, 30).then(generatedFrames => {
-            setFrames(generatedFrames)
+            if (reqId === activeReqIdRef.current && Array.isArray(generatedFrames) && generatedFrames.length > 0) {
+                setFrames(generatedFrames)
+            }
         })
     }
 
     const stopAll = () => {
         stop()
+        activeReqIdRef.current++
         setActivePreset(null)
         setFrames([])
     }
 
     return (
-        <div className="border" style={{ margin: "10px", padding: "10px" }}>
-            <h2 style={{ marginTop: 0 }}>Presets</h2>
-            <p className="label">Keyframe animations streamed locally at ≤10 Hz — no firmware changes needed.</p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                {PRESETS.map(p => (
-                    <button
-                        key={p.name}
-                        type="button"
-                        onClick={() => play(p.name)}
-                        style={btnStyle}
-                        aria-label={p.label}
-                    >
-                        {p.label}
-                    </button>
-                ))}
+        <div className="border" style={{ margin: "10px", padding: "12px", background: "rgba(15, 23, 42, 0.65)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                <h2 style={{ margin: 0, fontSize: "1.3rem", color: "var(--c1-green)" }}>
+                    Dynamic Motion Presets
+                </h2>
+                {activePreset && (
+                    <span style={{ 
+                        display: "flex", 
+                        alignItems: "center", 
+                        gap: "6px", 
+                        padding: "2px 8px", 
+                        borderRadius: "12px", 
+                        background: "rgba(252, 66, 123, 0.2)",
+                        border: "1px solid var(--c2-pink)",
+                        fontSize: "0.7rem",
+                        color: "var(--c2-pink)"
+                    }}>
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--c2-pink)", animation: "pulse 1s infinite" }} />
+                        Executing: <strong>{activePreset}</strong>
+                    </span>
+                )}
+            </div>
+
+            <p className="label" style={{ marginBottom: "12px", color: "#94a3b8" }}>
+                High-speed 60FPS Quintic Minimum-Jerk interpolation streamed to hardware at 10Hz.
+            </p>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "8px", marginBottom: "12px" }}>
+                {PRESETS.map(p => {
+                    const isRunning = activePreset === p.name
+                    return (
+                        <button
+                            key={p.name}
+                            type="button"
+                            onClick={() => play(p.name)}
+                            style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                alignItems: "flex-start",
+                                padding: "8px 10px",
+                                borderRadius: "6px",
+                                border: isRunning ? "1px solid var(--c1-green)" : "1px solid rgba(41, 128, 185, 0.4)",
+                                background: isRunning ? "rgba(50, 255, 126, 0.15)" : "rgba(23, 33, 43, 0.8)",
+                                color: isRunning ? "var(--c1-green)" : "#e2e8f0",
+                                cursor: "pointer",
+                                transition: "all 0.2s ease-in-out",
+                                textAlign: "left"
+                            }}
+                            aria-label={p.label}
+                        >
+                            <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.85rem", fontWeight: "bold" }}>
+                                <span>{p.icon}</span>
+                                <span>{p.label}</span>
+                            </div>
+                            <span style={{ fontSize: "0.62rem", color: "#64748b", marginTop: "4px" }}>
+                                {p.desc}
+                            </span>
+                        </button>
+                    )
+                })}
+            </div>
+
+            <div style={{ display: "flex", gap: "8px" }}>
                 <button
                     type="button"
                     onClick={stopAll}
-                    style={btnStyle}
-                    aria-label="Stop Preset"
+                    style={{
+                        flex: 1,
+                        padding: "8px",
+                        borderRadius: "6px",
+                        border: "1px solid var(--c6-red)",
+                        background: "rgba(255, 33, 33, 0.15)",
+                        color: "var(--c6-red)",
+                        fontWeight: "bold",
+                        cursor: activePreset ? "pointer" : "default",
+                        opacity: activePreset ? 1 : 0.6
+                    }}
                     disabled={!activePreset}
                 >
-                    Stop
+                    ⏹ Stop Motion Sequence
                 </button>
             </div>
-            {activePreset && (
-                <div className="label" style={{ marginTop: 6, color: "var(--c4-amber)" }}>
-                    ▶ {activePreset}…
-                </div>
-            )}
         </div>
     )
 }
@@ -3750,34 +4076,14 @@ export {
 ================================================================================
 
 // web-ui/src/components/viewport/ViewportToggle.js
-//
-// P2 Phase B: pill-style SIM/CAM toggle that sits absolutely-positioned at the
-// top-right inside the #plot stage container. Renders two tabs (SIM, CAM);
-// a single sliding indicator follows the active tab via CSS transform so the
-// transition is GPU-accelerated and doesn't reflow.
-//
-// Accessibility: role="tablist" + role="tab" + aria-pressed + aria-label on
-// each tab. Keyboard activation handled natively by <button>.
-//
-// Icons come from the existing react-icons/fa dep (v3.10.0) — no new installs.
-
 import React from "react"
 import { FaCube, FaVideo } from "react-icons/fa"
-
-// FA4's "video-camera" was renamed to "video" in Font Awesome 5 (the set
-// react-icons v3.10.0 ships). FaVideoCamera does NOT exist in v3.x — using it
-// yields `undefined` at render time ("Element type is invalid"). Verified
-// against the installed node_modules/react-icons/fa/index.d.ts (v3.10.0):
-// line ~685 has FaCube, line ~1378 has FaVideo. See
-// docs/future-roadmap/camera/README.md §B for the same note.
 
 const TABS = [
     { id: "sim", label: "SIM", icon: FaCube, title: "3D simulator view" },
     { id: "cam", label: "CAM", icon: FaVideo, title: "Live MJPEG camera view" },
 ]
 
-// Indicator width is half the pill width; the CSS transform shifts it
-// horizontally by exactly one tab's width when active changes.
 const indicatorTransform = activeId =>
     activeId === "cam" ? "translateX(100%)" : "translateX(0%)"
 
@@ -3851,7 +4157,7 @@ const ViewportToggle = ({ activeView, onChange }) => {
                         key={tab.id}
                         type="button"
                         role="tab"
-                        aria-pressed={isActive}
+                        aria-selected={isActive}
                         aria-label={tab.title}
                         title={tab.title}
                         data-testid={`viewport-toggle-${tab.id}`}
@@ -3891,8 +4197,8 @@ describe("ViewportToggle", () => {
         const camTab = screen.getByTestId("viewport-toggle-cam")
         expect(simTab).toHaveAttribute("role", "tab")
         expect(camTab).toHaveAttribute("role", "tab")
-        expect(simTab).toHaveAttribute("aria-pressed", "true")
-        expect(camTab).toHaveAttribute("aria-pressed", "false")
+        expect(simTab).toHaveAttribute("aria-selected", "true")
+        expect(camTab).toHaveAttribute("aria-selected", "false")
     })
 
     it("fires onChange('cam') when the CAM tab is clicked", () => {
@@ -3917,21 +4223,21 @@ describe("ViewportToggle", () => {
             <ViewportToggle activeView="sim" onChange={() => {}} />
         )
         expect(screen.getByTestId("viewport-toggle-sim")).toHaveAttribute(
-            "aria-pressed",
+            "aria-selected",
             "true"
         )
         expect(screen.getByTestId("viewport-toggle-cam")).toHaveAttribute(
-            "aria-pressed",
+            "aria-selected",
             "false"
         )
 
         rerender(<ViewportToggle activeView="cam" onChange={() => {}} />)
         expect(screen.getByTestId("viewport-toggle-sim")).toHaveAttribute(
-            "aria-pressed",
+            "aria-selected",
             "false"
         )
         expect(screen.getByTestId("viewport-toggle-cam")).toHaveAttribute(
-            "aria-pressed",
+            "aria-selected",
             "true"
         )
     })
@@ -4578,6 +4884,7 @@ import * as oSolverGeneral from "./solvers/orient/orientSolverGeneral"
 import * as oSolverSpecific from "./solvers/orient/orientSolverSpecific"
 
 import { simpleTwist, mightTwist, complexTwist } from "./solvers/twistSolver"
+import { DEFAULT_DIMENSIONS } from "../templates"
 
 const DEFAULT_LOCAL_AXES = {
     xAxis: new Vector(1, 0, 0, "hexapodXaxis"),
@@ -4593,14 +4900,21 @@ const transformLocalAxes = (localAxes, twistMatrix) => ({
 
 /* * *
  build a list of six legs
- given dimensions and  the respective
+ given dimensions and the respective
  bodyContacts points and pose
  * * */
-const buildLegsList = (bodyContactPoints, pose, legDimensions) =>
-    POSITION_NAMES_LIST.map(
+const buildLegsList = (bodyContactPoints, pose, legDimensions) => {
+    const safePose = pose && typeof pose === "object" ? pose : ZERO_POSE
+    return POSITION_NAMES_LIST.map(
         (position, index) =>
-            new Linkage(legDimensions, position, bodyContactPoints[index], pose[position])
+            new Linkage(
+                legDimensions,
+                position,
+                bodyContactPoints ? bodyContactPoints[index] : { x: 0, y: 0, z: 0 },
+                (safePose && safePose[position]) || { alpha: 0, beta: 0, gamma: 0 }
+            )
     )
+}
 
 const hexapodErrorInfo = () => ({
     isAlert: true,
@@ -4614,73 +4928,6 @@ const hexapodSuccessInfo = () => ({
     body: "Stable orientation found.",
 })
 
-/* * *
-
-............................
- Virtual Hexapod properties
-............................
-
-Property types:
-{}: hash map / object / dictionary
-[]: array / list
-##: number
-"": string
-
-{} this.dimensions: {front, side, middle, coxia, femur, tibia}
-
-{} this.pose: A hash mapping the position name to a hash map of three angles
-    which define the pose of the hexapod
-    i.e. { rightMiddle: {alpha, beta, gamma },
-           leftBack: { alpha, betam gamma },
-             ...
-         }
-
-[] this.body: A hexagon object
-    which contains all the info of the 8 points defining the hexapod body
-    (6 vertices, 1 head, 1 center of gravity)
-
-[] this.legs: A list which has elements that point to six Linkage objects.
-    The order goes counter clockwise starting from the first element
-    which is the rightMiddle leg up until the last element which is rightBack leg.
-    Each leg contains the points that define that leg
-    as well as other properties pertaining it (see Linkage class)
-
-[] this.legPositionsOnGround: A list of the leg positions (strings)
-    that are known to be in contact with the ground
-
-{} this.localAxes: A hash containing three vectors defining the local
-    coordinate frame of the hexapod wrt the world coordinate frame
-    i.e. {
-        xAxis: {x, y, z, name="hexapodXaxis", id="no-id"},
-        yAxis: {x, y, z, name="hexapodYaxis", id="no-id"},
-        zAxis: {x, y, z, name="hexapodZaxis", id="no-id"},
-    }
-
-....................
-(virtual hexapod derived properties)
-....................
-
-{} this.bodyDimensions: { front, side, middle }
-{} this.legDimensions: { coxia, femur, tibia }
-
-## this.distanceFromGround: A number which is the perpendicular distance
-    from the hexapod's center of gravity to the ground plane
-
-{} this.cogProjection: a point that represents the projection
-    of the hexapod's center of gravity point to the ground plane
-    i.e { x, y, z, name="centerOfGravityProjectionPoint", id="no-id"}
-
-[] this.groundContactPoints: a list whose elements point to points
-    from the leg which contacts the ground.
-    This list can contain 6 or less elements.
-    (It can have a length of 3, 4, 5 or 6)
-    i.e. [
-        { x, y, z, name="rightMiddle-femurPoint", id="0-2"},
-        { x, y, z, name="leftBack-footTipPoint", id=4-3},
-         ...
-    ]
-
- * * */
 class VirtualHexapod {
     dimensions
     pose
@@ -4689,35 +4936,29 @@ class VirtualHexapod {
     legPositionsOnGround
     localAxes
     foundSolution
+
     constructor(
         dimensions,
         pose,
         flags = { hasNoPoints: false, assumeKnownGroundPoints: false, wontRotate: false }
     ) {
-        Object.assign(this, { dimensions, pose })
+        this.dimensions = dimensions && typeof dimensions === "object" ? dimensions : DEFAULT_DIMENSIONS
+        this.pose = pose && typeof pose === "object" ? pose : ZERO_POSE
 
-        if (flags.hasNoPoints) {
+        if (flags.hasNoPoints || !this.dimensions) {
             return
         }
 
-        // .................
-        // STEP 1: Build a flatHexagon and 'dangling' linkages
-        // then find  properties we can derive from this
-        // .................
-
+        // 1. Build a flatHexagon and 'dangling' linkages
         const flatHexagon = new Hexagon(this.bodyDimensions)
 
-        // legsNoGravity are linkages have the correct pose but
-        // are not necessarily correctly oriented wrt the world
-        // prettier-ignore
         const legsNoGravity = buildLegsList(
-            flatHexagon.verticesList, this.pose, this.legDimensions
+            flatHexagon.verticesList,
+            this.pose,
+            this.legDimensions
         )
 
-        // `solved` has:
-        // - new orientation of the body (nAxis)
-        // - which legs are on the ground (groundLegsNoGravity)
-        // - distance of center of gravity to the ground (height)
+        // Solved orientation of body
         const solved = flags.assumeKnownGroundPoints
             ? oSolverSpecific.computeOrientationProperties(legsNoGravity)
             : oSolverGeneral.computeOrientationProperties(legsNoGravity)
@@ -4730,13 +4971,10 @@ class VirtualHexapod {
         this.foundSolution = true
         this.legPositionsOnGround = solved.groundLegsNoGravity.map(leg => leg.position)
 
-        // .................
-        // STEP 2: Rotate and shift legs and body given what we've solved
-        // .................
-
-        // prettier-ignore
+        // 2. Rotate and shift legs and body given solved parameters
         const transformMatrix = matrixToAlignVectorAtoB(
-            solved.nAxis, DEFAULT_LOCAL_AXES.zAxis
+            solved.nAxis,
+            DEFAULT_LOCAL_AXES.zAxis
         )
 
         this.legs = legsNoGravity.map(leg =>
@@ -4745,26 +4983,21 @@ class VirtualHexapod {
         this.body = flatHexagon.cloneTrotShift(transformMatrix, 0, 0, solved.height)
         this.localAxes = transformLocalAxes(DEFAULT_LOCAL_AXES, transformMatrix)
 
-        // .................
-        // STEP 3: Twist around the zAxis if you have to
-        // .................
+        // 3. Twist around zAxis if needed
         if (flags.wontRotate) {
             return
         }
 
-        // case 1: hexapod will not twist about z axis
         if (this.legs.every(leg => leg.pose.alpha === 0)) {
             return
         }
 
-        // case 2: When all alpha angles are the same for all legs
         const twistAngle = simpleTwist(solved.groundLegsNoGravity)
-        if (this.maybeTwistAngle !== 0) {
+        if (twistAngle !== 0) {
             this._twist(twistAngle)
             return
         }
 
-        // case 3: All other cases
         if (mightTwist(solved.groundLegsNoGravity)) {
             this._handleComplexTwist(flatHexagon.verticesList)
         }
@@ -4798,14 +5031,13 @@ class VirtualHexapod {
     }
 
     get groundContactPoints() {
-        return this.legPositionsOnGround.map(position => {
+        return (this.legPositionsOnGround || []).map(position => {
             const index = POSITION_NAME_TO_ID_MAP[position]
             return this.legs[index].maybeGroundContactPoint
         })
     }
 
     cloneTrot(transformMatrix) {
-        // Note: transform matrix passed should be purely rotational
         const body = this.body.cloneTrot(transformMatrix)
         const legs = this.legs.map(leg => leg.cloneTrot(transformMatrix))
         const localAxes = transformLocalAxes(this.localAxes, transformMatrix)
@@ -4819,11 +5051,6 @@ class VirtualHexapod {
     }
 
     _buildClone(body, legs, localAxes) {
-        // FIXME:
-        // After shifting and/or rotating the hexapod
-        // We can no longer guarrantee that the legPositionsOnGround
-        // is the same as before
-        // must handle this soon!!
         let clone = new VirtualHexapod(this.dimensions, this.pose, { hasNoPoints: true })
         Object.assign(clone, {
             body,
@@ -4837,25 +5064,20 @@ class VirtualHexapod {
 
     _handleComplexTwist(verticesList) {
         const defaultLegs = buildLegsList(
-            verticesList, ZERO_POSE, this.legDimensions
+            verticesList,
+            ZERO_POSE,
+            this.legDimensions
         )
 
-        // DefaultLegs: The list of legs when a hexapod
-        // of these dimensions is at the default pose
-        // (ie all angles are zero)
-        // DefaultPoints: the corresponding ground contact
-        // points of defaultLegs
         const defaultPoints = defaultLegs.map(
             leg => leg.cloneShift(0, 0, this.dimensions.tibia).maybeGroundContactPoint
         )
 
-        // currentPoints: Where the ground contact points are currently
-        // given all the transformations we have done so far
         const currentPoints = this.groundContactPoints
         const twistAngle = complexTwist(currentPoints, defaultPoints)
 
         if (twistAngle !== 0) {
-            this._twist()
+            this._twist(twistAngle)
         }
     }
 
@@ -6162,49 +6384,42 @@ export { solveHexapodParams }
 
 // web-ui/src/hexapod/solvers/motionSynthesizer.js
 import solveInverseKinematics from "./ik/hexapodSolver"
+import getWalkSequence from "./walkSequenceSolver"
 import { ZERO_POSE } from "../constants"
+import { DEFAULT_GAIT_PARAMS } from "../../templates"
 
 const DEFAULT_POSE = ZERO_POSE
 
-/**
- * Phase 1: Quintic Minimum-Jerk polynomial interpolation.
- * s(t) = 10t^3 - 15t^4 + 6t^5
- * Guarantees zero velocity and zero acceleration at start and end.
- */
 export function quinticEase(t) {
     return t * t * t * (t * (t * 6 - 15) + 10)
 }
 
-/**
- * Utility to blend between two poses with quintic easing (Main Thread Fallback)
- */
+function blendTwoPoses(startPose, targetPose, t) {
+    const pose = {}
+    const legs = ["leftFront", "rightFront", "leftMiddle", "rightMiddle", "leftBack", "rightBack"]
+    const defaultLeg = { alpha: 0, beta: 0, gamma: 0 }
+    legs.forEach(leg => {
+        const s = (startPose && startPose[leg]) || defaultLeg
+        const target = (targetPose && targetPose[leg]) || defaultLeg
+        pose[leg] = {
+            alpha: (s.alpha || 0) + ((target.alpha || 0) - (s.alpha || 0)) * t,
+            beta: (s.beta || 0) + ((target.beta || 0) - (s.beta || 0)) * t,
+            gamma: (s.gamma || 0) + ((target.gamma || 0) - (s.gamma || 0)) * t,
+        }
+    })
+    return pose
+}
+
 export function interpolatePoses(startPose, targetPose, steps = 10) {
     const frames = []
-    const legs = ["leftFront", "rightFront", "leftMiddle", "rightMiddle", "leftBack", "rightBack"]
-
     for (let i = 0; i <= steps; i++) {
         const t = steps === 0 ? 1 : i / steps
         const ease = quinticEase(t)
-        const pose = {}
-
-        legs.forEach(leg => {
-            const sLeg = (startPose && startPose[leg]) || { alpha: 0, beta: 0, gamma: 0 }
-            const tLeg = (targetPose && targetPose[leg]) || { alpha: 0, beta: 0, gamma: 0 }
-
-            pose[leg] = {
-                alpha: (sLeg.alpha || 0) + ((tLeg.alpha || 0) - (sLeg.alpha || 0)) * ease,
-                beta: (sLeg.beta || 0) + ((tLeg.beta || 0) - (sLeg.beta || 0)) * ease,
-                gamma: (sLeg.gamma || 0) + ((tLeg.gamma || 0) - (sLeg.gamma || 0)) * ease,
-            }
-        })
-        frames.push(pose)
+        frames.push(blendTwoPoses(startPose, targetPose, ease))
     }
     return frames
 }
 
-/**
- * Builds a smooth frame sequence from an array of keyframe poses (Main Thread)
- */
 export function buildSequenceFromKeyframes(keyframes, stepsPerTransition = 10) {
     if (!keyframes || keyframes.length === 0) return [DEFAULT_POSE]
     if (keyframes.length === 1) return interpolatePoses(DEFAULT_POSE, keyframes[0], stepsPerTransition)
@@ -6226,7 +6441,6 @@ let jobCounter = 0
 const pendingJobs = new Map()
 
 function getWorker() {
-    // Only spin up the worker in browser environments (protects Jest test runs)
     if (!workerInstance && typeof window !== "undefined" && window.Worker) {
         const workerCode = `
             function quinticEase(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
@@ -6285,7 +6499,6 @@ export function buildSequenceFromKeyframesAsync(keyframes, stepsPerTransition = 
     return new Promise((resolve, reject) => {
         const worker = getWorker()
         if (!worker) {
-            // Fallback for Jest/tests that don't have Blob Worker support
             resolve(buildSequenceFromKeyframes(keyframes, stepsPerTransition))
             return
         }
@@ -6295,9 +6508,6 @@ export function buildSequenceFromKeyframesAsync(keyframes, stepsPerTransition = 
     })
 }
 
-/**
- * Helper to solve IK pose safely
- */
 export function getIkPose(dimensions, ikParams) {
     try {
         const result = solveInverseKinematics(dimensions, ikParams)
@@ -6310,15 +6520,11 @@ export function getIkPose(dimensions, ikParams) {
     return DEFAULT_POSE
 }
 
-/**
- * Defines the critical keyframes. Decoupled from the interpolator loop so 
- * IK solves happen synchronously, but frame-generation is Async.
- */
 export function generatePresetKeyframes(presetName, dimensions, cycles = 3, startPose = DEFAULT_POSE) {
     const keyframes = []
     const count = Math.max(1, Math.min(cycles || 3, 10))
 
-    if (presetName === "wave" || presetName === "waveLeg" || presetName === "sayHi") {
+    if (presetName === "wave" || presetName === "waveLeg" || presetName === "sayHi" || presetName === "preset_wave") {
         const waveLift = JSON.parse(JSON.stringify(DEFAULT_POSE))
         waveLift.rightFront = { alpha: 25, beta: 65, gamma: -60 }
 
@@ -6337,7 +6543,7 @@ export function generatePresetKeyframes(presetName, dimensions, cycles = 3, star
         keyframes.push(waveLift)
         keyframes.push(DEFAULT_POSE)
 
-    } else if (presetName === "doubleWave" || presetName === "cheer") {
+    } else if (presetName === "doubleWave" || presetName === "cheer" || presetName === "preset_cheer") {
         const cheerUp1 = JSON.parse(JSON.stringify(DEFAULT_POSE))
         cheerUp1.leftFront = { alpha: -20, beta: 60, gamma: -50 }
         cheerUp1.rightFront = { alpha: 20, beta: 60, gamma: -50 }
@@ -6353,26 +6559,26 @@ export function generatePresetKeyframes(presetName, dimensions, cycles = 3, star
         }
         keyframes.push(DEFAULT_POSE)
 
-    } else if (presetName === "standUp") {
+    } else if (presetName === "standUp" || presetName === "preset_stand") {
         const tallPose = getIkPose(dimensions, { tx: 0, ty: 0, tz: 0.35, rx: 0, ry: 0, rz: 0, hipStance: 25, legStance: 10 })
         keyframes.push(startPose)
         keyframes.push(tallPose)
 
-    } else if (presetName === "sitDown") {
+    } else if (presetName === "sitDown" || presetName === "preset_sit") {
         const lowPose = getIkPose(dimensions, { tx: 0, ty: 0, tz: -0.4, rx: 0, ry: 0, rz: 0, hipStance: 20, legStance: 0 })
         keyframes.push(startPose)
         keyframes.push(lowPose)
 
-    } else if (presetName === "bow") {
+    } else if (presetName === "bow" || presetName === "preset_bow") {
         const bowForward = getIkPose(dimensions, { tx: 0, ty: 0.1, tz: -0.15, rx: 0, ry: 25, rz: 0, hipStance: 20, legStance: 0 })
         const bowBack = getIkPose(dimensions, { tx: 0, ty: -0.05, tz: 0, rx: 0, ry: -10, rz: 0, hipStance: 20, legStance: 0 })
         keyframes.push(startPose)
         keyframes.push(bowForward)
-        keyframes.push(bowForward) // Hold bow
+        keyframes.push(bowForward)
         keyframes.push(bowBack)
         keyframes.push(DEFAULT_POSE)
 
-    } else if (presetName === "danceWiggle" || presetName === "dance") {
+    } else if (presetName === "danceWiggle" || presetName === "dance" || presetName === "preset_dance") {
         keyframes.push(startPose)
         for (let c = 0; c < count; c++) {
             const h1 = getIkPose(dimensions, { tx: 0.15, ty: 0, tz: 0.1, rx: 18, ry: 12, rz: 22, hipStance: 22, legStance: 5 })
@@ -6382,7 +6588,7 @@ export function generatePresetKeyframes(presetName, dimensions, cycles = 3, star
         }
         keyframes.push(DEFAULT_POSE)
 
-    } else if (presetName === "twistAndLook" || presetName === "lookAround") {
+    } else if (presetName === "twistAndLook" || presetName === "lookAround" || presetName === "preset_look_around") {
         const lookLeft = getIkPose(dimensions, { tx: 0, ty: 0, tz: 0.05, rx: -10, ry: 10, rz: 40, hipStance: 20, legStance: 0 })
         const lookRight = getIkPose(dimensions, { tx: 0, ty: 0, tz: 0.05, rx: 10, ry: 10, rz: -40, hipStance: 20, legStance: 0 })
         keyframes.push(startPose)
@@ -6394,7 +6600,7 @@ export function generatePresetKeyframes(presetName, dimensions, cycles = 3, star
         }
         keyframes.push(DEFAULT_POSE)
 
-    } else if (presetName === "pushups") {
+    } else if (presetName === "pushups" || presetName === "preset_pushups") {
         const pushDown = getIkPose(dimensions, { tx: 0, ty: 0, tz: -0.45, rx: 0, ry: 10, rz: 0, hipStance: 18, legStance: -5 })
         const pushUp = getIkPose(dimensions, { tx: 0, ty: 0, tz: 0.25, rx: 0, ry: -5, rz: 0, hipStance: 25, legStance: 10 })
         keyframes.push(startPose)
@@ -6404,7 +6610,7 @@ export function generatePresetKeyframes(presetName, dimensions, cycles = 3, star
         }
         keyframes.push(DEFAULT_POSE)
 
-    } else if (presetName === "stretch") {
+    } else if (presetName === "stretch" || presetName === "preset_stretch") {
         const stretchOut = getIkPose(dimensions, { tx: 0, ty: 0, tz: 0.3, rx: 15, ry: 0, rz: 0, hipStance: 35, legStance: 20 })
         const stretchSide = getIkPose(dimensions, { tx: 0, ty: 0, tz: 0.3, rx: -15, ry: 0, rz: 0, hipStance: 35, legStance: 20 })
         keyframes.push(startPose)
@@ -6419,17 +6625,11 @@ export function generatePresetKeyframes(presetName, dimensions, cycles = 3, star
     return keyframes
 }
 
-/**
- * Sync version for testing fallback
- */
 export function generatePresetFrames(presetName, dimensions, cycles = 3, startPose = DEFAULT_POSE, stepsPerTransition = 10) {
     const keyframes = generatePresetKeyframes(presetName, dimensions, cycles, startPose)
     return buildSequenceFromKeyframes(keyframes, stepsPerTransition)
 }
 
-/**
- * Main UI version: generates keyframes then offloads quintic interpolation to Web Worker.
- */
 export async function generatePresetFramesAsync(presetName, dimensions, cycles = 3, startPose = DEFAULT_POSE, stepsPerTransition = 30) {
     const keyframes = generatePresetKeyframes(presetName, dimensions, cycles, startPose)
     return await buildSequenceFromKeyframesAsync(keyframes, stepsPerTransition)
@@ -6469,6 +6669,83 @@ export function expandGaitSequence(walkSequence, stepsPerFrame = 3, loopCount = 
         smoothFrames = smoothFrames.concat(sub)
     }
     return smoothFrames
+}
+
+/**
+ * Synthesizes walking and turning gait frames with true 3D body rotation
+ */
+export async function generateLocomotionFrames(actionId, dimensions, durationMs = 3000, startPose = DEFAULT_POSE) {
+    const isSpin = actionId === "spin"
+    const isTurnLeft = actionId === "turn_left"
+    const isTurnRight = actionId === "turn_right"
+    const isRotate = isSpin || isTurnLeft || isTurnRight
+    const walkMode = isRotate ? "rotating" : "walking"
+    const isBackward = actionId === "walk_backward"
+
+    const gaitParams = {
+        ...DEFAULT_GAIT_PARAMS,
+        hipSwing: isSpin ? 35 : 25,
+        liftSwing: 38,
+        stepCount: 5,
+    }
+
+    const walkSeq = getWalkSequence(dimensions, gaitParams, "tripod", walkMode)
+    if (!walkSeq) return [{ pose: startPose, twist: 0 }, { pose: DEFAULT_POSE, twist: 0 }]
+
+    const loopCount = isSpin ? 4 : isRotate ? 2 : Math.max(2, Math.round(durationMs / 1000))
+    const rawPoses = expandGaitSequence(walkSeq, 3, loopCount)
+
+    if (isBackward) {
+        rawPoses.reverse()
+    }
+
+    // Set heading twist target in degrees
+    let targetTwist = 0
+    if (isSpin) {
+        targetTwist = 360
+    } else if (isTurnLeft) {
+        targetTwist = 90
+    } else if (isTurnRight) {
+        targetTwist = -90
+    }
+
+    const totalSteps = rawPoses.length
+    const frames = []
+
+    // 1. Lead-in blend from startPose
+    const leadInSteps = 6
+    for (let i = 0; i <= leadInSteps; i++) {
+        const t = i / leadInSteps
+        const ease = quinticEase(t)
+        frames.push({
+            pose: blendTwoPoses(startPose, rawPoses[0], ease),
+            twist: 0
+        })
+    }
+
+    // 2. Active Locomotion with progressive heading rotation
+    for (let i = 0; i < totalSteps; i++) {
+        const progress = totalSteps > 1 ? i / (totalSteps - 1) : 0
+        const currentTwist = isRotate ? targetTwist * progress : 0
+        frames.push({
+            pose: rawPoses[i],
+            twist: currentTwist
+        })
+    }
+
+    // 3. Lead-out blend to neutral standing pose
+    const leadOutSteps = 6
+    const lastPose = rawPoses[rawPoses.length - 1] || DEFAULT_POSE
+    for (let i = 1; i <= leadOutSteps; i++) {
+        const t = i / leadOutSteps
+        const ease = quinticEase(t)
+        frames.push({
+            pose: blendTwoPoses(lastPose, DEFAULT_POSE, ease),
+            twist: isRotate ? targetTwist : 0
+        })
+    }
+
+    return frames
 }
 
 ================================================================================
@@ -7400,29 +7677,19 @@ const getBrokerUrl = () => {
     const params = new URLSearchParams(window.location.search)
     const queryBroker = params.get("broker")
 
-    // Pick ws:// vs wss:// to match the page's protocol so browsers don't block
-    // the WebSocket as mixed-content when the page is served over HTTPS.
-    // On HTTPS we also point at Caddy's WSS-terminating listener on :9443,
-    // because mosquitto's plain-WS listener on :9001 is already taken; Caddy
-    // strips TLS and forwards plaintext to ws://127.0.0.1:9001. On HTTP we
-    // use the broker directly on :9001.
     const isHttps = window.location.protocol === "https:"
     const wsScheme = isHttps ? "wss" : "ws"
     const wsPort = isHttps ? "9443" : "9001"
 
-    // 1. Manual override via URL (e.g., http://localhost:3000/?broker=pi-hub.local)
     if (queryBroker) {
         return `${wsScheme}://${queryBroker}:${wsPort}`
     }
 
     const hostname = window.location.hostname
-
-    // 2. Development Mode: Fallback to the EMQX cloud broker for Wokwi testing
     if (hostname === "localhost" || hostname === "127.0.0.1") {
         return "ws://broker.emqx.io:8083/mqtt"
     }
 
-    // 3. Production Mode: Auto-resolve to RPi's active address (192.168.4.1 or pi-hub.local)
     return `${wsScheme}://${hostname}:${wsPort}`
 }
 
@@ -7439,16 +7706,6 @@ const getDeviceId = (defaultId = "hexapod-s3-01") => {
     return queryDevice || defaultId
 }
 
-// P6b servo cutover: the web-ui publishes commands/heartbeat/AI/audio to the
-// *controller* device (S3) by default, but the camera feed comes from a
-// separate device (CAM). The CAM stream is sourced independently so that
-// decoupling the camera from the controller doesn't break the MJPEG viewer.
-//
-// Override either via URL:
-//   ?device=<id>      -> controller/target device (default: hexapod-s3-01)
-//   ?cam=<id>         -> camera-source device      (default: hexapod-cam-01)
-// The CAM device is only subscribed (config + telemetry); we never publish
-// to it.
 const getCameraDeviceId = (defaultId = "hexapod-cam-01") => {
     const params = new URLSearchParams(window.location.search)
     const queryCam = params.get("cam")
@@ -7462,30 +7719,24 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
     const [telemetry, setTelemetry] = useState(null)
     const [logs, setLogs] = useState([])
     const [config, setConfig] = useState(null)
-    // P6b servo cutover: camera-feed source state. Kept independent of
-    // `config` / `telemetry` so the MJPEG viewer still resolves when the
-    // controller device (S3) doesn't emit mjpeg_url.
     const [camTelemetry, setCamTelemetry] = useState(null)
     const [camConfig, setCamConfig] = useState(null)
-    // P5 — AI voice layer state: chat messages, AI service health, S3 audio playback status
     const [aiMessages, setAiMessages] = useState([])
     const [aiStatus, setAiStatus] = useState(null)
     const [audioStatus, setAudioStatus] = useState(null)
+
     const clientRef = useRef(null)
     const lastPublishRef = useRef(0)
     const pendingPublishRef = useRef(null)
     const trailingTimerRef = useRef(null)
+
     const clearLogs = useCallback(() => {
         setLogs([])
     }, [])
 
-    // P5 — AI voice: clear the remote-assistant reply cache so a "Clear chat"
-    // actually resets the conversation (prevents stale aiMessages from
-    // re-populating the panel via the AIPanel merge effect).
     const clearAiMessages = useCallback(() => {
         setAiMessages([])
     }, [])
-
 
     useEffect(() => {
         const resolvedUrl = brokerUrlOverride || getBrokerUrl()
@@ -7502,18 +7753,15 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
             client.subscribe(`hexapod/${deviceId}/telemetry`)
             client.subscribe(`hexapod/${deviceId}/logs`)
             client.subscribe(`hexapod/${deviceId}/config`)
-            // P5 — AI voice layer
             client.subscribe(`hexapod/${deviceId}/ai`)
             client.subscribe(`hexapod/${deviceId}/ai/status`)
             client.subscribe(`hexapod/${deviceId}/audio/status`)
-            // P6b servo cutover: also subscribe to the camera-source device's
-            // config + telemetry so the MJPEG viewer can resolve the stream
-            // URL independently of the controller device.
+
             if (camDeviceId && camDeviceId !== deviceId) {
                 client.subscribe(`hexapod/${camDeviceId}/telemetry`)
                 client.subscribe(`hexapod/${camDeviceId}/config`)
             }
-            console.log(`[MQTT WebUI] Connected and subscribed to topics for device: ${deviceId}` + (camDeviceId !== deviceId ? ` (cam source: ${camDeviceId})` : ""))
+            console.log(`[MQTT WebUI] Connected and subscribed to device: ${deviceId} (cam: ${camDeviceId})`)
         })
 
         client.on("close", () => {
@@ -7522,9 +7770,6 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
 
         client.on("message", (topic, message) => {
             const payload = message.toString()
-            // P6b servo cutover: route telemetry/config by which device
-            // emitted it so the controller's telemetry doesn't clobber the
-            // camera's.
             const isCamTopic = camDeviceId && topic.startsWith(`hexapod/${camDeviceId}/`)
 
             if (topic.endsWith("telemetry")) {
@@ -7534,6 +7779,11 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
                         setCamTelemetry(parsed)
                     } else {
                         setTelemetry(parsed)
+                        if (parsed.pose && typeof window !== "undefined") {
+                            window.dispatchEvent(
+                                new CustomEvent("hexapod-telemetry-frame", { detail: parsed.pose })
+                            )
+                        }
                     }
                 } catch (e) {
                     console.error("[MQTT WebUI] Telemetry parse error:", e)
@@ -7581,22 +7831,20 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
                 client.end()
             }
         }
-    }, [brokerUrlOverride, deviceId])
+    }, [brokerUrlOverride, deviceId, camDeviceId])
 
     useEffect(() => {
         if (!isConnected || !clientRef.current) return
 
-        // Periodically publishes a lightweight heartbeat to reset the ESP32 safety watchdog
         const heartbeatInterval = setInterval(() => {
             const targetTopic = `hexapod/${deviceId}/cmd`
             const payload = JSON.stringify({ type: "heartbeat" })
-            
             try {
                 clientRef.current.publish(targetTopic, payload)
             } catch (err) {
                 console.error("[MQTT WebUI] Heartbeat publish failed:", err)
             }
-        }, 500) // 500ms intervals (twice as fast as the 1000ms watchdog timeout)
+        }, 500)
 
         return () => {
             clearInterval(heartbeatInterval)
@@ -7615,7 +7863,7 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         const now = Date.now()
         const elapsed = now - lastPublishRef.current
 
-        if (elapsed >= 100) { // 100ms = 10Hz
+        if (elapsed >= 100) {
             clientRef.current.publish(targetTopic, JSON.stringify(payload))
             lastPublishRef.current = now
             pendingPublishRef.current = null
@@ -7626,9 +7874,6 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
             return
         }
 
-        // Inside the throttle window: remember the latest value and
-        // guarantee it still gets sent once the window closes, even if
-        // this was the last change before releasing the slider.
         pendingPublishRef.current = { targetTopic, payload }
         if (!trailingTimerRef.current) {
             trailingTimerRef.current = setTimeout(() => {
@@ -7649,7 +7894,6 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         console.log(`[MQTT WebUI] Immediate Publish -> [${targetTopic}]:`, payload)
     }, [isConnected, deviceId])
 
-    // P5 — AI voice layer publishing helpers (topics are already device-scoped)
     const publishAi = useCallback(payload => {
         if (!clientRef.current || !isConnected) return
         const topic = `hexapod/${deviceId}/ai`
@@ -7664,7 +7908,25 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         console.log(`[MQTT WebUI] Audio Publish -> [${topic}]:`, payload)
     }, [isConnected, deviceId])
 
-    return { isConnected, telemetry, logs, config, deviceId, camDeviceId, camTelemetry, camConfig, aiMessages, aiStatus, audioStatus, publishThrottled, publishImmediate, publishAi, publishAudio, clearLogs, clearAiMessages }
+    return { 
+        isConnected, 
+        telemetry, 
+        logs, 
+        config, 
+        deviceId, 
+        camDeviceId, 
+        camTelemetry, 
+        camConfig, 
+        aiMessages, 
+        aiStatus, 
+        audioStatus, 
+        publishThrottled, 
+        publishImmediate, 
+        publishAi, 
+        publishAudio, 
+        clearLogs, 
+        clearAiMessages 
+    }
 }
 
 ================================================================================
@@ -7700,7 +7962,8 @@ export const usePoseFrameStream = (
 
     useEffect(() => {
         stop()
-        if (!enabled || !framesRef.current || framesRef.current.length === 0) {
+        const activeFrames = framesRef.current
+        if (!enabled || !Array.isArray(activeFrames) || activeFrames.length === 0) {
             return undefined
         }
 
@@ -7710,33 +7973,44 @@ export const usePoseFrameStream = (
         const publishInterval = 1000 / publishHz
 
         const tick = (now) => {
-            const elapsed = now - startTime
-            let frameIdx = Math.floor(elapsed / frameDuration)
-
-            // 1. Sequence Completion
-            if (frameIdx >= framesRef.current.length) {
-                frameIdx = framesRef.current.length - 1
-                const finalPose = framesRef.current[frameIdx]
-                
-                // Final visual render & network publish
-                window.dispatchEvent(new CustomEvent('hexapod-anim-frame', { detail: finalPose }))
-                onPublishRef.current(finalPose)
-                
-                // Sync React state globally now that the animation is over
-                onCompleteRef.current(finalPose)
+            const currentList = framesRef.current
+            if (!currentList || !Array.isArray(currentList) || currentList.length === 0) {
                 stop()
                 return
             }
 
-            const currentPose = framesRef.current[frameIdx]
+            const elapsed = now - startTime
+            let frameIdx = Math.floor(elapsed / frameDuration)
 
-            // 2. High-Speed Visual Update @ 60FPS (Bypasses React Reconciliation)
-            window.dispatchEvent(new CustomEvent('hexapod-anim-frame', { detail: currentPose }))
+            // 1. Sequence Completion
+            if (frameIdx >= currentList.length) {
+                frameIdx = currentList.length - 1
+                if (frameIdx >= 0 && frameIdx < currentList.length) {
+                    const finalFrame = currentList[frameIdx]
+                    if (finalFrame && typeof finalFrame === "object") {
+                        const finalPose = finalFrame.pose || finalFrame
+                        window.dispatchEvent(new CustomEvent('hexapod-anim-frame', { detail: finalFrame }))
+                        if (onPublishRef.current) onPublishRef.current(finalPose)
+                        if (onCompleteRef.current) onCompleteRef.current(finalPose)
+                    }
+                }
+                stop()
+                return
+            }
 
-            // 3. Throttled Physical Publish @ 10Hz
-            if (now - lastPublish >= publishInterval) {
-                onPublishRef.current(currentPose)
-                lastPublish = now
+            if (frameIdx >= 0 && frameIdx < currentList.length) {
+                const currentFrame = currentList[frameIdx]
+                if (currentFrame && typeof currentFrame === "object") {
+                    // 2. High-Speed Visual Update @ 60FPS (carries { pose, twist } to Plotly)
+                    window.dispatchEvent(new CustomEvent('hexapod-anim-frame', { detail: currentFrame }))
+
+                    // 3. Throttled Physical Publish @ 10Hz (extracts plain pose for MQTT)
+                    if (now - lastPublish >= publishInterval) {
+                        const rawPose = currentFrame.pose || currentFrame
+                        if (onPublishRef.current) onPublishRef.current(rawPose)
+                        lastPublish = now
+                    }
+                }
             }
 
             reqRef.current = requestAnimationFrame(tick)
@@ -9179,6 +9453,115 @@ import { DATA, SCENE, LAYOUT, CAMERA_VIEW, DATA_INDEX_MAP } from "./"
 const _getSumOfDimensions = dimensions =>
     Object.values(dimensions).reduce((sum, dimension) => sum + dimension, 0)
 
+// Fast-path: Extracts arrays for traces 0..14 (Target Hexapod) for Plotly.restyle
+export const getTargetTraceUpdates = (hexapod) => {
+    const polygonVertices = hexapod.body.closedPointsList
+    const bodyX = polygonVertices.map(point => point.x)
+    const bodyY = polygonVertices.map(point => point.y)
+    const bodyZ = polygonVertices.map(point => point.z)
+    const { head, cog } = hexapod.body
+    const { cogProjection, legs, groundContactPoints } = hexapod
+
+    const axisScale = hexapod.body.dimensions.front / 2
+    const { xAxis, yAxis, zAxis } = hexapod.localAxes
+
+    const x = [
+        bodyX,                                // 0: bodyMesh
+        bodyX,                                // 1: bodyOutline
+        [head.x],                             // 2: head
+        [cog.x],                              // 3: centerOfGravity
+        [cogProjection.x],                    // 4: centerOfGravityProjection
+        legs[0].allPointsList.map(p => p.x),  // 5: rightMiddleLeg
+        legs[1].allPointsList.map(p => p.x),  // 6: rightFrontLeg
+        legs[2].allPointsList.map(p => p.x),  // 7: leftFrontLeg
+        legs[3].allPointsList.map(p => p.x),  // 8: leftMiddleLeg
+        legs[4].allPointsList.map(p => p.x),  // 9: leftBackLeg
+        legs[5].allPointsList.map(p => p.x),  // 10: rightBackLeg
+        groundContactPoints.map(p => p.x),    // 11: supportPolygonMesh
+        [cog.x, cog.x + axisScale * xAxis.x], // 12: hexapodXaxis
+        [cog.y, cog.x + axisScale * yAxis.x], // 13: hexapodYaxis
+        [cog.z, cog.x + axisScale * zAxis.x], // 14: hexapodZaxis
+    ]
+
+    const y = [
+        bodyY,
+        bodyY,
+        [head.y],
+        [cog.y],
+        [cogProjection.y],
+        legs[0].allPointsList.map(p => p.y),
+        legs[1].allPointsList.map(p => p.y),
+        legs[2].allPointsList.map(p => p.y),
+        legs[3].allPointsList.map(p => p.y),
+        legs[4].allPointsList.map(p => p.y),
+        legs[5].allPointsList.map(p => p.y),
+        groundContactPoints.map(p => p.y),
+        [cog.y, cog.y + axisScale * xAxis.y],
+        [cog.y, cog.y + axisScale * yAxis.y],
+        [cog.y, cog.y + axisScale * zAxis.y],
+    ]
+
+    const z = [
+        bodyZ,
+        bodyZ,
+        [head.z],
+        [cog.z],
+        [cogProjection.z],
+        legs[0].allPointsList.map(p => p.z),
+        legs[1].allPointsList.map(p => p.z),
+        legs[2].allPointsList.map(p => p.z),
+        legs[3].allPointsList.map(p => p.z),
+        legs[4].allPointsList.map(p => p.z),
+        legs[5].allPointsList.map(p => p.z),
+        groundContactPoints.map(p => p.z),
+        [cog.z, cog.z + axisScale * xAxis.z],
+        [cog.z, cog.z + axisScale * yAxis.z],
+        [cog.z, cog.z + axisScale * zAxis.z],
+    ]
+
+    const indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+    return { update: { x, y, z }, indices }
+}
+
+// Fast-path: Extracts arrays for traces 18..24 (Ghost Silhouette) for Plotly.restyle
+export const getGhostTraceUpdates = (ghostHexapod) => {
+    const indices = [18, 19, 20, 21, 22, 23, 24]
+    if (!ghostHexapod) {
+        const empty = [[], [], [], [], [], [], []]
+        return { update: { x: empty, y: empty, z: empty }, indices }
+    }
+
+    const ghostVerts = ghostHexapod.body.closedPointsList
+    const x = [
+        ghostVerts.map(p => p.x),
+        ghostHexapod.legs[0].allPointsList.map(p => p.x),
+        ghostHexapod.legs[1].allPointsList.map(p => p.x),
+        ghostHexapod.legs[2].allPointsList.map(p => p.x),
+        ghostHexapod.legs[3].allPointsList.map(p => p.x),
+        ghostHexapod.legs[4].allPointsList.map(p => p.x),
+        ghostHexapod.legs[5].allPointsList.map(p => p.x),
+    ]
+    const y = [
+        ghostVerts.map(p => p.y),
+        ghostHexapod.legs[0].allPointsList.map(p => p.y),
+        ghostHexapod.legs[1].allPointsList.map(p => p.y),
+        ghostHexapod.legs[2].allPointsList.map(p => p.y),
+        ghostHexapod.legs[3].allPointsList.map(p => p.y),
+        ghostHexapod.legs[4].allPointsList.map(p => p.y),
+        ghostHexapod.legs[5].allPointsList.map(p => p.y),
+    ]
+    const z = [
+        ghostVerts.map(p => p.z),
+        ghostHexapod.legs[0].allPointsList.map(p => p.z),
+        ghostHexapod.legs[1].allPointsList.map(p => p.z),
+        ghostHexapod.legs[2].allPointsList.map(p => p.z),
+        ghostHexapod.legs[3].allPointsList.map(p => p.z),
+        ghostHexapod.legs[4].allPointsList.map(p => p.z),
+        ghostHexapod.legs[5].allPointsList.map(p => p.z),
+    ]
+    return { update: { x, y, z }, indices }
+}
+
 const _drawHexapod = (hexapod, ghostHexapod) => {
     // 1. SOLID HEXAPOD (Target)
     const polygonVertices = hexapod.body.closedPointsList
@@ -9234,7 +9617,6 @@ const _drawHexapod = (hexapod, ghostHexapod) => {
             })
         })
     } else {
-        // Hide ghost traces if no telemetry is active
         ghostTraces.push({ ...DATA[DATA_INDEX_MAP.bodyOutlineGhost], x: [], y: [], z: [] })
         legs.forEach(leg => ghostTraces.push({ ...DATA[DATA_INDEX_MAP[`${leg.name}Ghost`]], x: [], y: [], z: [] }))
     }
@@ -11699,17 +12081,83 @@ export const matchAction = (text, actions) => {
 // Pure helpers for the P5 voice panel (browser mic -> 16kHz mono 16-bit WAV base64).
 // Kept side-effect free so they can be unit-tested without getUserMedia/AudioContext.
 
+export const VOICE_PROCESSOR_CODE = `
+class VoiceCaptureProcessor extends AudioWorkletProcessor {
+    constructor(options) {
+        super();
+        const opts = (options && options.processorOptions) || {};
+        this.sampleRate = opts.sampleRate || 48000;
+        this.silenceRms = opts.silenceRms || 0.02;
+        this.silentBlocksForEnd = opts.silentBlocksForEnd || 30;
+        this.maxSliceSamples = opts.maxSliceMs
+            ? Math.floor((opts.maxSliceMs * this.sampleRate) / 1000)
+            : Math.floor(2.5 * this.sampleRate);
+        this.buffer = [];
+        this.silentBlocks = 0;
+        this.totalSamples = 0;
+        this.port.onmessage = (e) => {
+            if (e.data && e.data.command === "flush") {
+                this.flush(true);
+            }
+        };
+    }
+    process(inputs) {
+        const input = inputs[0];
+        if (!input || !input[0] || input[0].length === 0) return true;
+        const channelData = input[0];
+        const len = channelData.length;
+        const copy = new Float32Array(len);
+        copy.set(channelData);
+        this.buffer.push(copy);
+        this.totalSamples += len;
+        let sum = 0;
+        for (let i = 0; i < len; i++) sum += channelData[i] * channelData[i];
+        const rms = Math.sqrt(sum / len);
+        if (rms < this.silenceRms) {
+            this.silentBlocks++;
+        } else {
+            this.silentBlocks = 0;
+        }
+        const hasMinSpeech = this.totalSamples >= (0.4 * this.sampleRate);
+        const silenceDetected = this.silentBlocks >= this.silentBlocksForEnd && hasMinSpeech;
+        const maxDurationExceeded = this.totalSamples >= this.maxSliceSamples;
+        if (silenceDetected || maxDurationExceeded) {
+            this.flush(false);
+        }
+        return true;
+    }
+    flush(forced) {
+        if (this.totalSamples === 0) return;
+        const joined = new Float32Array(this.totalSamples);
+        let offset = 0;
+        for (let i = 0; i < this.buffer.length; i++) {
+            joined.set(this.buffer[i], offset);
+            offset += this.buffer[i].length;
+        }
+        this.port.postMessage({
+            type: "audio_slice",
+            samples: joined,
+            sampleRate: this.sampleRate,
+            forced: forced
+        });
+        this.buffer = [];
+        this.totalSamples = 0;
+        this.silentBlocks = 0;
+    }
+}
+registerProcessor("voice-capture-processor", VoiceCaptureProcessor);
+`;
+
 /**
- * Downsample + convert a Float32 mono buffer (as delivered by AudioContext,
- * typically 48kHz) to 16-bit signed PCM at 16kHz.
+ * Downsample + convert a Float32 mono buffer to 16-bit signed PCM at 16kHz.
  *
- * @param {Float32Array} samples - mono audio in (-1..1), source sample rate `srcRate`
+ * @param {Float32Array} samples - mono audio in (-1..1)
  * @param {number} srcRate - source sample rate (e.g. 48000)
  * @returns {Int16Array} 16kHz PCM samples
  */
 export const to16kPcm = (samples, srcRate) => {
     const targetRate = 16000
-    const step = srcRate / targetRate // 48000/16000 = 3 (exact integer on standard hardware)
+    const step = srcRate / targetRate
     const outLen = Math.floor(samples.length / step)
     const out = new Int16Array(outLen)
     for (let i = 0; i < outLen; i++) {
@@ -11723,7 +12171,7 @@ export const to16kPcm = (samples, srcRate) => {
 /**
  * Build a 16-bit mono WAV file (44-byte PCM header) from PCM samples.
  * @param {Int16Array} pcm - 16-bit signed PCM samples
- * @param {number} sampleRate - samples/second (16000 for the STT leg)
+ * @param {number} sampleRate - samples/second (16000)
  * @returns {Uint8Array} complete WAV bytes
  */
 export const buildWav = (pcm, sampleRate) => {
@@ -11742,13 +12190,13 @@ export const buildWav = (pcm, sampleRate) => {
     view.setUint32(4, 36 + dataSize, true)
     writeString(8, "WAVE")
     writeString(12, "fmt ")
-    view.setUint32(16, 16, true) // PCM fmt chunk size
-    view.setUint16(20, 1, true)  // audio format = PCM
-    view.setUint16(22, 1, true)  // mono
+    view.setUint32(16, 16, true)
+    view.setUint16(20, 1, true)
+    view.setUint16(22, 1, true)
     view.setUint32(24, sampleRate, true)
-    view.setUint32(28, sampleRate * 2, true) // byte rate
-    view.setUint16(32, 2, true)  // block align
-    view.setUint16(34, 16, true) // bits per sample
+    view.setUint32(28, sampleRate * 2, true)
+    view.setUint16(32, 2, true)
+    view.setUint16(34, 16, true)
     writeString(36, "data")
     view.setUint32(40, dataSize, true)
 
@@ -11760,7 +12208,7 @@ export const buildWav = (pcm, sampleRate) => {
 }
 
 /**
- * Base64-encode bytes (chunked to avoid call-stack limits on large slices).
+ * Base64-encode bytes.
  * @param {Uint8Array} bytes
  * @returns {string}
  */

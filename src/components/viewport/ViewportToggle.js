@@ -1,32 +1,12 @@
 // web-ui/src/components/viewport/ViewportToggle.js
-//
-// P2 Phase B: pill-style SIM/CAM toggle that sits absolutely-positioned at the
-// top-right inside the #plot stage container. Renders two tabs (SIM, CAM);
-// a single sliding indicator follows the active tab via CSS transform so the
-// transition is GPU-accelerated and doesn't reflow.
-//
-// Accessibility: role="tablist" + role="tab" + aria-pressed + aria-label on
-// each tab. Keyboard activation handled natively by <button>.
-//
-// Icons come from the existing react-icons/fa dep (v3.10.0) — no new installs.
-
 import React from "react"
 import { FaCube, FaVideo } from "react-icons/fa"
-
-// FA4's "video-camera" was renamed to "video" in Font Awesome 5 (the set
-// react-icons v3.10.0 ships). FaVideoCamera does NOT exist in v3.x — using it
-// yields `undefined` at render time ("Element type is invalid"). Verified
-// against the installed node_modules/react-icons/fa/index.d.ts (v3.10.0):
-// line ~685 has FaCube, line ~1378 has FaVideo. See
-// docs/future-roadmap/camera/README.md §B for the same note.
 
 const TABS = [
     { id: "sim", label: "SIM", icon: FaCube, title: "3D simulator view" },
     { id: "cam", label: "CAM", icon: FaVideo, title: "Live MJPEG camera view" },
 ]
 
-// Indicator width is half the pill width; the CSS transform shifts it
-// horizontally by exactly one tab's width when active changes.
 const indicatorTransform = activeId =>
     activeId === "cam" ? "translateX(100%)" : "translateX(0%)"
 
@@ -100,7 +80,7 @@ const ViewportToggle = ({ activeView, onChange }) => {
                         key={tab.id}
                         type="button"
                         role="tab"
-                        aria-pressed={isActive}
+                        aria-selected={isActive}
                         aria-label={tab.title}
                         title={tab.title}
                         data-testid={`viewport-toggle-${tab.id}`}

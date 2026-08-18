@@ -1,6 +1,7 @@
+// web-ui/src/components/vars.js
 import React from "react"
 import { GiCoffeeMug } from "react-icons/gi"
-import { FaGithubAlt, FaTimes, FaHome, FaCamera, FaMicrochip, FaVolumeUp, FaRobot } from "react-icons/fa"
+import { FaGithubAlt, FaTimes, FaHome, FaCamera, FaMicrochip, FaVolumeUp, FaRobot, FaBalanceScale } from "react-icons/fa"
 import { GrStatusGoodSmall } from "react-icons/gr"
 
 const SECTION_NAMES = {
@@ -15,6 +16,7 @@ const SECTION_NAMES = {
     audio: "Audio",
     ai: "AI Assistant",
     presets: "Presets",
+    judgement: "Judgement",
 }
 
 const PATH_NAMES = {
@@ -28,6 +30,7 @@ const PATH_NAMES = {
     audio: "/audio",
     ai: "/ai",
     presets: "/presets",
+    judgement: "/judgement",
 }
 
 const ANGLE_NAMES = ["alpha", "beta", "gamma"]
@@ -99,6 +102,7 @@ const GAIT_RANGE_PARAMS = {
     liftSwing: { minVal: 10, maxVal: 70, stepVal: 1, defaultVal: 40 },
     stepCount: { minVal: 3, maxVal: 7, stepVal: 1, defaultVal: 5 },
 }
+
 /*************
  * ICONS
  *************/
@@ -113,6 +117,7 @@ const ICON_COMPONENTS = {
     microchip: <FaMicrochip className="vertical-align" />,
     volume: <FaVolumeUp className="vertical-align" />,
     robot: <FaRobot className="vertical-align" />,
+    judgement: <FaBalanceScale className="vertical-align" />,
 }
 
 /*************
@@ -140,7 +145,6 @@ const PATHS = {
         description: SECTION_NAMES.landingPage,
         icon: ICON_COMPONENTS.home,
     },
-
     walkingGaits: {
         path: PATH_NAMES.walkingGaits,
         description: SECTION_NAMES.walkingGaits,
@@ -150,31 +154,37 @@ const PATHS = {
         path: PATH_NAMES.camera,
         description: SECTION_NAMES.camera,
         icon: ICON_COMPONENTS.camera,
-        hidden: true, // P2: MJPEG stream + web feed
+        hidden: true,
     },
     sensors: {
         path: PATH_NAMES.sensors,
         description: SECTION_NAMES.sensors,
         icon: ICON_COMPONENTS.microchip,
-        hidden: true, // P4: ultrasonic proximity
+        hidden: true,
     },
     audio: {
         path: PATH_NAMES.audio,
         description: SECTION_NAMES.audio,
         icon: ICON_COMPONENTS.volume,
-        hidden: true, // P3: MAX98357 speaker
+        hidden: true,
     },
     ai: {
         path: PATH_NAMES.ai,
         description: SECTION_NAMES.ai,
         icon: ICON_COMPONENTS.robot,
-        hidden: false, // P5: STT → LLM → MQTT → TTS (unveiled 2026-08-16)
+        hidden: false,
     },
     presets: {
         path: PATH_NAMES.presets,
         description: SECTION_NAMES.presets,
         icon: ICON_COMPONENTS.circle,
-        hidden: false, // Chunk 2: keyframe presets (motionSynthesizer) — unveiled 2026-08-18
+        hidden: false,
+    },
+    judgement: {
+        path: PATH_NAMES.judgement,
+        description: SECTION_NAMES.judgement,
+        icon: ICON_COMPONENTS.judgement,
+        hidden: false,
     },
 }
 
@@ -197,22 +207,18 @@ const PATH_LINKS = [
     PATHS.forwardKinematics,
     PATHS.legPatterns,
     PATHS.walkingGaits,
+    PATHS.ai,
+    PATHS.presets,
+    PATHS.judgement,
     PATHS.camera,
     PATHS.sensors,
     PATHS.audio,
-    PATHS.ai,
-    PATHS.presets,
     PATHS.landingPage,
 ].filter(l => !l.hidden)
 
 const URL_LINKS = [KOFI_LINK_PROPERTIES, REPO_LINK_PROPERTIES]
 
-/*************
- * LANDING PAGE
- *************/
-
 const LANDING_PAGE_MESSAGE = `
-
 # Mithi's Bare Minimum Hexapod Robot Simulator
 
 Enjoy your stay and share with your friends!

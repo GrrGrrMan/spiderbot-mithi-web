@@ -9,6 +9,7 @@ import * as oSolverGeneral from "./solvers/orient/orientSolverGeneral"
 import * as oSolverSpecific from "./solvers/orient/orientSolverSpecific"
 
 import { simpleTwist, mightTwist, complexTwist } from "./solvers/twistSolver"
+import { DEFAULT_DIMENSIONS } from "../templates"
 
 const DEFAULT_LOCAL_AXES = {
     xAxis: new Vector(1, 0, 0, "hexapodXaxis"),
@@ -24,14 +25,21 @@ const transformLocalAxes = (localAxes, twistMatrix) => ({
 
 /* * *
  build a list of six legs
- given dimensions and  the respective
+ given dimensions and the respective
  bodyContacts points and pose
  * * */
-const buildLegsList = (bodyContactPoints, pose, legDimensions) =>
-    POSITION_NAMES_LIST.map(
+const buildLegsList = (bodyContactPoints, pose, legDimensions) => {
+    const safePose = pose && typeof pose === "object" ? pose : ZERO_POSE
+    return POSITION_NAMES_LIST.map(
         (position, index) =>
-            new Linkage(legDimensions, position, bodyContactPoints[index], pose[position])
+            new Linkage(
+                legDimensions,
+                position,
+                bodyContactPoints ? bodyContactPoints[index] : { x: 0, y: 0, z: 0 },
+                (safePose && safePose[position]) || { alpha: 0, beta: 0, gamma: 0 }
+            )
     )
+}
 
 const hexapodErrorInfo = () => ({
     isAlert: true,
@@ -45,73 +53,6 @@ const hexapodSuccessInfo = () => ({
     body: "Stable orientation found.",
 })
 
-/* * *
-
-............................
- Virtual Hexapod properties
-............................
-
-Property types:
-{}: hash map / object / dictionary
-[]: array / list
-##: number
-"": string
-
-{} this.dimensions: {front, side, middle, coxia, femur, tibia}
-
-{} this.pose: A hash mapping the position name to a hash map of three angles
-    which define the pose of the hexapod
-    i.e. { rightMiddle: {alpha, beta, gamma },
-           leftBack: { alpha, betam gamma },
-             ...
-         }
-
-[] this.body: A hexagon object
-    which contains all the info of the 8 points defining the hexapod body
-    (6 vertices, 1 head, 1 center of gravity)
-
-[] this.legs: A list which has elements that point to six Linkage objects.
-    The order goes counter clockwise starting from the first element
-    which is the rightMiddle leg up until the last element which is rightBack leg.
-    Each leg contains the points that define that leg
-    as well as other properties pertaining it (see Linkage class)
-
-[] this.legPositionsOnGround: A list of the leg positions (strings)
-    that are known to be in contact with the ground
-
-{} this.localAxes: A hash containing three vectors defining the local
-    coordinate frame of the hexapod wrt the world coordinate frame
-    i.e. {
-        xAxis: {x, y, z, name="hexapodXaxis", id="no-id"},
-        yAxis: {x, y, z, name="hexapodYaxis", id="no-id"},
-        zAxis: {x, y, z, name="hexapodZaxis", id="no-id"},
-    }
-
-....................
-(virtual hexapod derived properties)
-....................
-
-{} this.bodyDimensions: { front, side, middle }
-{} this.legDimensions: { coxia, femur, tibia }
-
-## this.distanceFromGround: A number which is the perpendicular distance
-    from the hexapod's center of gravity to the ground plane
-
-{} this.cogProjection: a point that represents the projection
-    of the hexapod's center of gravity point to the ground plane
-    i.e { x, y, z, name="centerOfGravityProjectionPoint", id="no-id"}
-
-[] this.groundContactPoints: a list whose elements point to points
-    from the leg which contacts the ground.
-    This list can contain 6 or less elements.
-    (It can have a length of 3, 4, 5 or 6)
-    i.e. [
-        { x, y, z, name="rightMiddle-femurPoint", id="0-2"},
-        { x, y, z, name="leftBack-footTipPoint", id=4-3},
-         ...
-    ]
-
- * * */
 class VirtualHexapod {
     dimensions
     pose
@@ -120,35 +61,29 @@ class VirtualHexapod {
     legPositionsOnGround
     localAxes
     foundSolution
+
     constructor(
         dimensions,
         pose,
         flags = { hasNoPoints: false, assumeKnownGroundPoints: false, wontRotate: false }
     ) {
-        Object.assign(this, { dimensions, pose })
+        this.dimensions = dimensions && typeof dimensions === "object" ? dimensions : DEFAULT_DIMENSIONS
+        this.pose = pose && typeof pose === "object" ? pose : ZERO_POSE
 
-        if (flags.hasNoPoints) {
+        if (flags.hasNoPoints || !this.dimensions) {
             return
         }
 
-        // .................
-        // STEP 1: Build a flatHexagon and 'dangling' linkages
-        // then find  properties we can derive from this
-        // .................
-
+        // 1. Build a flatHexagon and 'dangling' linkages
         const flatHexagon = new Hexagon(this.bodyDimensions)
 
-        // legsNoGravity are linkages have the correct pose but
-        // are not necessarily correctly oriented wrt the world
-        // prettier-ignore
         const legsNoGravity = buildLegsList(
-            flatHexagon.verticesList, this.pose, this.legDimensions
+            flatHexagon.verticesList,
+            this.pose,
+            this.legDimensions
         )
 
-        // `solved` has:
-        // - new orientation of the body (nAxis)
-        // - which legs are on the ground (groundLegsNoGravity)
-        // - distance of center of gravity to the ground (height)
+        // Solved orientation of body
         const solved = flags.assumeKnownGroundPoints
             ? oSolverSpecific.computeOrientationProperties(legsNoGravity)
             : oSolverGeneral.computeOrientationProperties(legsNoGravity)
@@ -161,13 +96,10 @@ class VirtualHexapod {
         this.foundSolution = true
         this.legPositionsOnGround = solved.groundLegsNoGravity.map(leg => leg.position)
 
-        // .................
-        // STEP 2: Rotate and shift legs and body given what we've solved
-        // .................
-
-        // prettier-ignore
+        // 2. Rotate and shift legs and body given solved parameters
         const transformMatrix = matrixToAlignVectorAtoB(
-            solved.nAxis, DEFAULT_LOCAL_AXES.zAxis
+            solved.nAxis,
+            DEFAULT_LOCAL_AXES.zAxis
         )
 
         this.legs = legsNoGravity.map(leg =>
@@ -176,26 +108,21 @@ class VirtualHexapod {
         this.body = flatHexagon.cloneTrotShift(transformMatrix, 0, 0, solved.height)
         this.localAxes = transformLocalAxes(DEFAULT_LOCAL_AXES, transformMatrix)
 
-        // .................
-        // STEP 3: Twist around the zAxis if you have to
-        // .................
+        // 3. Twist around zAxis if needed
         if (flags.wontRotate) {
             return
         }
 
-        // case 1: hexapod will not twist about z axis
         if (this.legs.every(leg => leg.pose.alpha === 0)) {
             return
         }
 
-        // case 2: When all alpha angles are the same for all legs
         const twistAngle = simpleTwist(solved.groundLegsNoGravity)
-        if (this.maybeTwistAngle !== 0) {
+        if (twistAngle !== 0) {
             this._twist(twistAngle)
             return
         }
 
-        // case 3: All other cases
         if (mightTwist(solved.groundLegsNoGravity)) {
             this._handleComplexTwist(flatHexagon.verticesList)
         }
@@ -229,14 +156,13 @@ class VirtualHexapod {
     }
 
     get groundContactPoints() {
-        return this.legPositionsOnGround.map(position => {
+        return (this.legPositionsOnGround || []).map(position => {
             const index = POSITION_NAME_TO_ID_MAP[position]
             return this.legs[index].maybeGroundContactPoint
         })
     }
 
     cloneTrot(transformMatrix) {
-        // Note: transform matrix passed should be purely rotational
         const body = this.body.cloneTrot(transformMatrix)
         const legs = this.legs.map(leg => leg.cloneTrot(transformMatrix))
         const localAxes = transformLocalAxes(this.localAxes, transformMatrix)
@@ -250,11 +176,6 @@ class VirtualHexapod {
     }
 
     _buildClone(body, legs, localAxes) {
-        // FIXME:
-        // After shifting and/or rotating the hexapod
-        // We can no longer guarrantee that the legPositionsOnGround
-        // is the same as before
-        // must handle this soon!!
         let clone = new VirtualHexapod(this.dimensions, this.pose, { hasNoPoints: true })
         Object.assign(clone, {
             body,
@@ -268,25 +189,20 @@ class VirtualHexapod {
 
     _handleComplexTwist(verticesList) {
         const defaultLegs = buildLegsList(
-            verticesList, ZERO_POSE, this.legDimensions
+            verticesList,
+            ZERO_POSE,
+            this.legDimensions
         )
 
-        // DefaultLegs: The list of legs when a hexapod
-        // of these dimensions is at the default pose
-        // (ie all angles are zero)
-        // DefaultPoints: the corresponding ground contact
-        // points of defaultLegs
         const defaultPoints = defaultLegs.map(
             leg => leg.cloneShift(0, 0, this.dimensions.tibia).maybeGroundContactPoint
         )
 
-        // currentPoints: Where the ground contact points are currently
-        // given all the transformations we have done so far
         const currentPoints = this.groundContactPoints
         const twistAngle = complexTwist(currentPoints, defaultPoints)
 
         if (twistAngle !== 0) {
-            this._twist()
+            this._twist(twistAngle)
         }
     }
 
