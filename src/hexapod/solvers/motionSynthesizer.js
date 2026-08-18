@@ -1,36 +1,28 @@
 // web-ui/src/hexapod/solvers/motionSynthesizer.js
-// Chunk 2 — ported from the legacy hexapod web-ui (`GrrGrrMan/hexapod-legacy`,
-// branch `main`, directory `web-ui/src/MotionSynthesizer.js`).
-//
-// Restores the legacy "custom animation interpolation + presets" on top of the
-// V2 stack with ZERO firmware changes: interpolated poses are streamed through
-// the normal servo payload path ({type:"pose", pose}) by `usePoseFrameStream`
-// (see PresetsPage / AIPanel).
-//
-// Changes vs the legacy file (imports only — the math is untouched):
-//   - solveInverseKinematics now comes from the local V2 solver
-//     (./ik/hexapodSolver), which V2's barrel re-exports with the same
-//     signature `(dimensions, rawIKparams, flags?)`; its result also carries
-//     `hexapod.pose`, so `getIkPose` reads the same shape. Imported from the
-//     direct module (NOT `../../hexapod`) so this file never becomes the entry
-//     into the templates<->hexapod barrel cycle (which crashes under jest).
-//   - DEFAULT_POSE now comes from src/hexapod/constants (== ZERO_POSE, all 6
-//     legs — the same object src/templates re-exports).
 import solveInverseKinematics from "./ik/hexapodSolver"
 import { ZERO_POSE } from "../constants"
 
 const DEFAULT_POSE = ZERO_POSE
 
 /**
- * Utility to blend between two poses with cosine easing
+ * Phase 1: Quintic Minimum-Jerk polynomial interpolation.
+ * s(t) = 10t^3 - 15t^4 + 6t^5
+ * Guarantees zero velocity and zero acceleration at start and end.
+ */
+export function quinticEase(t) {
+    return t * t * t * (t * (t * 6 - 15) + 10)
+}
+
+/**
+ * Utility to blend between two poses with quintic easing (Main Thread Fallback)
  */
 export function interpolatePoses(startPose, targetPose, steps = 10) {
     const frames = []
     const legs = ["leftFront", "rightFront", "leftMiddle", "rightMiddle", "leftBack", "rightBack"]
 
     for (let i = 0; i <= steps; i++) {
-        const t = i / steps
-        const ease = (1 - Math.cos(t * Math.PI)) / 2 // Cosine ease-in-out
+        const t = steps === 0 ? 1 : i / steps
+        const ease = quinticEase(t)
         const pose = {}
 
         legs.forEach(leg => {
@@ -49,7 +41,7 @@ export function interpolatePoses(startPose, targetPose, steps = 10) {
 }
 
 /**
- * Builds a smooth frame sequence from an array of keyframe poses
+ * Builds a smooth frame sequence from an array of keyframe poses (Main Thread)
  */
 export function buildSequenceFromKeyframes(keyframes, stepsPerTransition = 10) {
     if (!keyframes || keyframes.length === 0) return [DEFAULT_POSE]
@@ -58,11 +50,87 @@ export function buildSequenceFromKeyframes(keyframes, stepsPerTransition = 10) {
     let fullSequence = []
     for (let i = 0; i < keyframes.length - 1; i++) {
         const seg = interpolatePoses(keyframes[i], keyframes[i + 1], stepsPerTransition)
-        // Omit first frame of subsequent segments to prevent duplicate keyframes
         if (i > 0) seg.shift()
         fullSequence = fullSequence.concat(seg)
     }
     return fullSequence
+}
+
+// -----------------------------------------------------------------------------
+// WEB WORKER: Asynchronous Trajectory Offloading
+// -----------------------------------------------------------------------------
+let workerInstance = null
+let jobCounter = 0
+const pendingJobs = new Map()
+
+function getWorker() {
+    // Only spin up the worker in browser environments (protects Jest test runs)
+    if (!workerInstance && typeof window !== "undefined" && window.Worker) {
+        const workerCode = `
+            function quinticEase(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+            function interpolatePoses(startPose, targetPose, steps) {
+                const frames = [];
+                const legs = ["leftFront", "rightFront", "leftMiddle", "rightMiddle", "leftBack", "rightBack"];
+                const defaultLeg = { alpha: 0, beta: 0, gamma: 0 };
+                for (let i = 0; i <= steps; i++) {
+                    const t = steps === 0 ? 1 : i / steps;
+                    const ease = quinticEase(t);
+                    const pose = {};
+                    legs.forEach(leg => {
+                        const sLeg = (startPose && startPose[leg]) || defaultLeg;
+                        const tLeg = (targetPose && targetPose[leg]) || defaultLeg;
+                        pose[leg] = {
+                            alpha: sLeg.alpha + (tLeg.alpha - sLeg.alpha) * ease,
+                            beta: sLeg.beta + (tLeg.beta - sLeg.beta) * ease,
+                            gamma: sLeg.gamma + (tLeg.gamma - sLeg.gamma) * ease,
+                        };
+                    });
+                    frames.push(pose);
+                }
+                return frames;
+            }
+            function buildSequenceFromKeyframes(keyframes, stepsPerTransition) {
+                if (!keyframes || keyframes.length === 0) return [];
+                if (keyframes.length === 1) return interpolatePoses(null, keyframes[0], stepsPerTransition);
+                let fullSequence = [];
+                for (let i = 0; i < keyframes.length - 1; i++) {
+                    const seg = interpolatePoses(keyframes[i], keyframes[i + 1], stepsPerTransition);
+                    if (i > 0) seg.shift();
+                    fullSequence = fullSequence.concat(seg);
+                }
+                return fullSequence;
+            }
+            self.onmessage = function(e) {
+                const { id, keyframes, stepsPerTransition } = e.data;
+                const frames = buildSequenceFromKeyframes(keyframes, stepsPerTransition);
+                self.postMessage({ id, frames });
+            };
+        `;
+        const blob = new Blob([workerCode], { type: "application/javascript" })
+        workerInstance = new Worker(URL.createObjectURL(blob))
+        workerInstance.onmessage = e => {
+            const { id, frames } = e.data
+            if (pendingJobs.has(id)) {
+                pendingJobs.get(id).resolve(frames)
+                pendingJobs.delete(id)
+            }
+        }
+    }
+    return workerInstance
+}
+
+export function buildSequenceFromKeyframesAsync(keyframes, stepsPerTransition = 10) {
+    return new Promise((resolve, reject) => {
+        const worker = getWorker()
+        if (!worker) {
+            // Fallback for Jest/tests that don't have Blob Worker support
+            resolve(buildSequenceFromKeyframes(keyframes, stepsPerTransition))
+            return
+        }
+        const id = jobCounter++
+        pendingJobs.set(id, { resolve, reject })
+        worker.postMessage({ id, keyframes, stepsPerTransition })
+    })
 }
 
 /**
@@ -81,14 +149,14 @@ export function getIkPose(dimensions, ikParams) {
 }
 
 /**
- * Generate rich, multi-frame keyframe sequences for preset actions & gestures
+ * Defines the critical keyframes. Decoupled from the interpolator loop so 
+ * IK solves happen synchronously, but frame-generation is Async.
  */
-export function generatePresetFrames(presetName, dimensions, cycles = 3, startPose = DEFAULT_POSE, stepsPerTransition = 10) {
+export function generatePresetKeyframes(presetName, dimensions, cycles = 3, startPose = DEFAULT_POSE) {
     const keyframes = []
     const count = Math.max(1, Math.min(cycles || 3, 10))
 
     if (presetName === "wave" || presetName === "waveLeg" || presetName === "sayHi") {
-        // Wave right front leg
         const waveLift = JSON.parse(JSON.stringify(DEFAULT_POSE))
         waveLift.rightFront = { alpha: 25, beta: 65, gamma: -60 }
 
@@ -106,9 +174,8 @@ export function generatePresetFrames(presetName, dimensions, cycles = 3, startPo
         }
         keyframes.push(waveLift)
         keyframes.push(DEFAULT_POSE)
-        return buildSequenceFromKeyframes(keyframes, stepsPerTransition)
+
     } else if (presetName === "doubleWave" || presetName === "cheer") {
-        // Wave both front legs
         const cheerUp1 = JSON.parse(JSON.stringify(DEFAULT_POSE))
         cheerUp1.leftFront = { alpha: -20, beta: 60, gamma: -50 }
         cheerUp1.rightFront = { alpha: 20, beta: 60, gamma: -50 }
@@ -123,15 +190,16 @@ export function generatePresetFrames(presetName, dimensions, cycles = 3, startPo
             keyframes.push(cheerUp2)
         }
         keyframes.push(DEFAULT_POSE)
-        return buildSequenceFromKeyframes(keyframes, stepsPerTransition)
 
     } else if (presetName === "standUp") {
         const tallPose = getIkPose(dimensions, { tx: 0, ty: 0, tz: 0.35, rx: 0, ry: 0, rz: 0, hipStance: 25, legStance: 10 })
-        return interpolatePoses(startPose, tallPose, Math.round(stepsPerTransition * 2.5))
+        keyframes.push(startPose)
+        keyframes.push(tallPose)
 
     } else if (presetName === "sitDown") {
         const lowPose = getIkPose(dimensions, { tx: 0, ty: 0, tz: -0.4, rx: 0, ry: 0, rz: 0, hipStance: 20, legStance: 0 })
-        return interpolatePoses(startPose, lowPose, Math.round(stepsPerTransition * 2.5))
+        keyframes.push(startPose)
+        keyframes.push(lowPose)
 
     } else if (presetName === "bow") {
         const bowForward = getIkPose(dimensions, { tx: 0, ty: 0.1, tz: -0.15, rx: 0, ry: 25, rz: 0, hipStance: 20, legStance: 0 })
@@ -141,7 +209,6 @@ export function generatePresetFrames(presetName, dimensions, cycles = 3, startPo
         keyframes.push(bowForward) // Hold bow
         keyframes.push(bowBack)
         keyframes.push(DEFAULT_POSE)
-        return buildSequenceFromKeyframes(keyframes, stepsPerTransition)
 
     } else if (presetName === "danceWiggle" || presetName === "dance") {
         keyframes.push(startPose)
@@ -152,7 +219,6 @@ export function generatePresetFrames(presetName, dimensions, cycles = 3, startPo
             keyframes.push(h2)
         }
         keyframes.push(DEFAULT_POSE)
-        return buildSequenceFromKeyframes(keyframes, stepsPerTransition)
 
     } else if (presetName === "twistAndLook" || presetName === "lookAround") {
         const lookLeft = getIkPose(dimensions, { tx: 0, ty: 0, tz: 0.05, rx: -10, ry: 10, rz: 40, hipStance: 20, legStance: 0 })
@@ -165,7 +231,6 @@ export function generatePresetFrames(presetName, dimensions, cycles = 3, startPo
             keyframes.push(lookRight)
         }
         keyframes.push(DEFAULT_POSE)
-        return buildSequenceFromKeyframes(keyframes, stepsPerTransition)
 
     } else if (presetName === "pushups") {
         const pushDown = getIkPose(dimensions, { tx: 0, ty: 0, tz: -0.45, rx: 0, ry: 10, rz: 0, hipStance: 18, legStance: -5 })
@@ -176,7 +241,6 @@ export function generatePresetFrames(presetName, dimensions, cycles = 3, startPo
             keyframes.push(pushUp)
         }
         keyframes.push(DEFAULT_POSE)
-        return buildSequenceFromKeyframes(keyframes, stepsPerTransition)
 
     } else if (presetName === "stretch") {
         const stretchOut = getIkPose(dimensions, { tx: 0, ty: 0, tz: 0.3, rx: 15, ry: 0, rz: 0, hipStance: 35, legStance: 20 })
@@ -185,17 +249,30 @@ export function generatePresetFrames(presetName, dimensions, cycles = 3, startPo
         keyframes.push(stretchOut)
         keyframes.push(stretchSide)
         keyframes.push(DEFAULT_POSE)
-        return buildSequenceFromKeyframes(keyframes, stepsPerTransition)
 
     } else {
-        // Fallback smooth reset to DEFAULT_POSE
-        return interpolatePoses(startPose, DEFAULT_POSE, stepsPerTransition)
+        keyframes.push(startPose)
+        keyframes.push(DEFAULT_POSE)
     }
+    return keyframes
 }
 
 /**
- * Converts a raw walkSequence (containing alpha/beta/gamma arrays) into an interpolated 30-60fps frame array
+ * Sync version for testing fallback
  */
+export function generatePresetFrames(presetName, dimensions, cycles = 3, startPose = DEFAULT_POSE, stepsPerTransition = 10) {
+    const keyframes = generatePresetKeyframes(presetName, dimensions, cycles, startPose)
+    return buildSequenceFromKeyframes(keyframes, stepsPerTransition)
+}
+
+/**
+ * Main UI version: generates keyframes then offloads quintic interpolation to Web Worker.
+ */
+export async function generatePresetFramesAsync(presetName, dimensions, cycles = 3, startPose = DEFAULT_POSE, stepsPerTransition = 30) {
+    const keyframes = generatePresetKeyframes(presetName, dimensions, cycles, startPose)
+    return await buildSequenceFromKeyframesAsync(keyframes, stepsPerTransition)
+}
+
 export function expandGaitSequence(walkSequence, stepsPerFrame = 3, loopCount = 1) {
     if (!walkSequence) return []
     const legKeys = Object.keys(walkSequence)
@@ -204,7 +281,6 @@ export function expandGaitSequence(walkSequence, stepsPerFrame = 3, loopCount = 
     const rawLength = walkSequence[legKeys[0]]?.alpha?.length || 0
     if (rawLength === 0) return []
 
-    // Convert walkSequence into pose array
     const rawPoses = []
     for (let f = 0; f < rawLength; f++) {
         const pose = {}
@@ -219,19 +295,16 @@ export function expandGaitSequence(walkSequence, stepsPerFrame = 3, loopCount = 
         rawPoses.push(pose)
     }
 
-    // Repeat for loopCount if requested
     let repeatedPoses = []
     for (let l = 0; l < Math.max(1, loopCount); l++) {
         repeatedPoses = repeatedPoses.concat(rawPoses)
     }
 
-    // Interpolate between consecutive poses for silky smooth animation
     let smoothFrames = []
     for (let i = 0; i < repeatedPoses.length - 1; i++) {
         const sub = interpolatePoses(repeatedPoses[i], repeatedPoses[i + 1], stepsPerFrame)
         if (i > 0) sub.shift()
         smoothFrames = smoothFrames.concat(sub)
     }
-
     return smoothFrames
 }

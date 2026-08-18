@@ -1,28 +1,24 @@
 // web-ui/src/components/pages/AIPanel.js
-// P5 — AI voice layer: chat + mic (STT) + action cards + AI service health.
+// P5 — AI voice layer: chat + AudioWorklet mic (STT) + action cards + AI service health.
 // Drives: hexapod/{id}/ai (text + base64 WAV audio) via publishAi,
 //         hexapod/cmd (motion/system actions) via publishImmediate,
 //         hexapod/{id}/audio (speaker quick-actions) via publishAudio.
 import React, { useState, useEffect, useRef, useCallback } from "react"
 import AI_ACTIONS from "../../constants/aiActions.json"
 import { SECTION_NAMES } from "../vars"
-import { buildWav, to16kPcm, bytesToBase64, blockRms } from "../../utils/aiAudio"
+import { buildWav, to16kPcm, bytesToBase64, VOICE_PROCESSOR_CODE } from "../../utils/aiAudio"
 import { matchAction } from "../../utils/aiActionMatcher"
 import { DEFAULT_POSE, DEFAULT_DIMENSIONS } from "../../templates"
 import { buildServoBatchPayload } from "../../utils/servoMapper"
-import { generatePresetFrames } from "../../hexapod/solvers/motionSynthesizer"
+import { generatePresetFramesAsync } from "../../hexapod/solvers/motionSynthesizer"
 import { usePoseFrameStream } from "../../hooks/usePoseFrameStream"
 
 const ACTIONS = AI_ACTIONS.actions
 const SILENCE_RMS = 0.02          // below this RMS = silence
-const SILENT_BLOCKS_FOR_END = 10  // ~0.85s @ 4096/48k blocks
 const MAX_SLICE_MS = 2500         // flush long speech every 2.5s
 const OFFLINE_REPLY = "I'm running in offline mode right now — try an action button!"
-const MAX_PERSISTED_MESSAGES = 200  // ~sessionStorage body cap; trim older
+const MAX_PERSISTED_MESSAGES = 200
 
-// Session-scoped chat cache. Survives nav-away/nav-back, hard refresh, and
-// tab restore. Per-device so multi-device users (?device=...) don't bleed.
-// Cleared automatically on tab close (sessionStorage, not localStorage).
 const chatStorageKey = (deviceId) => `hexapod/ai-chat/${deviceId || "default"}`
 
 const loadChat = (deviceId) => {
@@ -38,11 +34,10 @@ const loadChat = (deviceId) => {
 
 const saveChat = (deviceId, messages) => {
     try {
-        // Keep the last N (most relevant — LLM context window equivalent).
         const trim = messages.slice(-MAX_PERSISTED_MESSAGES)
         window.sessionStorage.setItem(chatStorageKey(deviceId), JSON.stringify(trim))
     } catch (e) {
-        // sessionStorage full / disabled — silent; chat still works in-memory.
+        // sessionStorage full / disabled — silent
     }
 }
 
@@ -59,8 +54,6 @@ const healthOf = aiStatus => {
 }
 
 const cacheHitRate = aiStatus => {
-    // 2026-08-18: LLM response cache stats ride along on the heartbeat.
-    // Returns a "3/12 (25%)" string, or null if not yet known.
     const c = aiStatus && aiStatus.llm && aiStatus.llm.cache
     if (!c) return null
     const total = (c.hits || 0) + (c.misses || 0)
@@ -81,6 +74,7 @@ const AIPanel = ({
     aiDeviceId = "default",
     clearAiMessages = () => {},
     params = {},
+    onUpdate = () => {}
 }) => {
     const [messages, setMessages] = useState(() => loadChat(aiDeviceId))
     const [input, setInput] = useState("")
@@ -90,17 +84,9 @@ const AIPanel = ({
     const chatRef = useRef(null)
     const recordingRef = useRef({})
 
-    // Chunk 2 — preset gestures run locally (the firmware has no preset handler):
-    // generatePresetFrames -> usePoseFrameStream -> {type:"pose"} over MQTT.
     const [presetFrames, setPresetFrames] = useState([])
     const lastDirectiveKeyRef = useRef(null)
 
-    // Treat only truly-offline/error states as offline. A transient "busy"
-    // heartbeat (every 5s while the RPi worker is processing a prior message)
-    // is still online-enough to queue — the RPi worker queue (maxsize=16)
-    // serializes the next message. Misclassifying "busy" as offline would
-    // silently drop the user's message from the MQTT path and emit the
-    // misleading OFFLINE_REPLY even though the RPi is merely busy. (fix 2026-08-18)
     const aiOnline = aiStatus && aiStatus.state !== "offline" && aiStatus.state !== "error"
     const health = healthOf(aiStatus)
 
@@ -109,7 +95,11 @@ const AIPanel = ({
         [publishImmediate]
     )
 
-    const { stop: stopPreset } = usePoseFrameStream(presetFrames, publishPresetPose)
+    const { stop: stopPreset } = usePoseFrameStream(presetFrames, publishPresetPose, {
+        onComplete: (finalPose) => {
+            onUpdate("pose", { pose: finalPose })
+        }
+    })
 
     const playPreset = useCallback(
         presetName => {
@@ -117,7 +107,10 @@ const AIPanel = ({
             stopPreset()
             const dims = (params && params.dimensions) || DEFAULT_DIMENSIONS
             const startPose = (params && params.pose) || DEFAULT_POSE
-            setPresetFrames(generatePresetFrames(presetName, dims, 3, startPose, 10))
+            
+            generatePresetFramesAsync(presetName, dims, 3, startPose, 30).then(frames => {
+                setPresetFrames(frames)
+            })
         },
         [params, stopPreset]
     )
@@ -127,7 +120,6 @@ const AIPanel = ({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
-    // Merge remote assistant replies (and our own round-tripped echoes).
     useEffect(() => {
         if (!aiMessages || !aiMessages.length) return
         setMessages(prev => {
@@ -137,11 +129,6 @@ const AIPanel = ({
         })
     }, [aiMessages])
 
-    // Chunk 2 — RPi preset directive. The ai-service never publishes preset
-    // payloads to the firmware cmd topic (no handler there); instead the
-    // assistant reply carries an `action_id` and web-ui runs the local
-    // interpolator. Idempotent across re-renders via (length | msgKey): new
-    // messages append to the array, so a repeat of the same reply still fires.
     useEffect(() => {
         if (!aiMessages || !aiMessages.length) return
         const last = aiMessages[aiMessages.length - 1]
@@ -157,9 +144,6 @@ const AIPanel = ({
         if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
     }, [messages])
 
-    // Persist chat to sessionStorage on every change so nav-away/nav-back and
-    // hard-refresh keep the visible history. Debounced-free: sessionStorage
-    // writes are sync but cheap; capped at MAX_PERSISTED_MESSAGES by saveChat.
     useEffect(() => {
         saveChat(aiDeviceId, messages)
     }, [messages, aiDeviceId])
@@ -179,13 +163,10 @@ const AIPanel = ({
         if (topic === "audio") {
             publishAudio(payload)
         } else if (payload && payload.type === "preset") {
-            // Chunk 2 — presets are web-ui-executed: the firmware has no preset
-            // handler, so run the local interpolator instead of MQTT.
             playPreset(payload.preset)
         } else {
             publishImmediate("hexapod/cmd", payload)
             if (duration_ms > 0) {
-                // Match the RPi ai-service TTL: auto-stop after the duration hint.
                 const stopPayload = { ...payload, vx: 0, vy: 0, omega: 0 }
                 setTimeout(() => publishImmediate("hexapod/cmd", stopPayload), duration_ms)
             }
@@ -199,10 +180,6 @@ const AIPanel = ({
         push("user", text)
         setInput("")
         if (aiOnline) {
-            // Full conversation memory (2026-08-17): ship the visible chat log
-            // (excluding the message we just pushed) so the LLM sees prior turns.
-            // ai-service caps to its MAX_LLM_HISTORY internally; we cap at 50
-            // here to keep the MQTT payload reasonable.
             const history = messages
                 .filter(m => m.role === "user" || m.role === "assistant")
                 .slice(-50)
@@ -210,7 +187,6 @@ const AIPanel = ({
             publishAi({ type: "text", role: "user", content: text, history })
             return
         }
-        // Offline deterministic fallback (task 5.1): keyword -> action, else canned reply.
         const action = matchAction(text, ACTIONS)
         if (action) {
             executeAction(action)
@@ -219,21 +195,13 @@ const AIPanel = ({
         }
     }, [input, aiOnline, publishAi, push, executeAction, messages])
 
-    const finalizeSlice = useCallback(() => {
-        const rec = recordingRef.current
-        if (!rec.accum || rec.accum.length === 0) return
-        const joined = new Float32Array(rec.accum.reduce((n, c) => n + c.length, 0))
-        let off = 0
-        for (const c of rec.accum) { joined.set(c, off); off += c.length }
-        rec.accum = []
-        rec.silentBlocks = 0
-
-        const pcm = to16kPcm(joined, rec.sampleRate)
+    // Process completed voice slices from the AudioWorklet thread
+    const handleAudioSlice = useCallback((samples, sampleRate) => {
+        const pcm = to16kPcm(samples, sampleRate)
         const wav = buildWav(pcm, 16000)
         const b64 = bytesToBase64(wav)
         push("user", `🎤 voice slice (${Math.round(wav.length / 32)}ms audio)`)
         if (aiOnline) {
-            // Same history contract as handleSend (full conversation memory).
             const history = messages
                 .filter(m => m.role === "user" || m.role === "assistant")
                 .slice(-50)
@@ -243,6 +211,7 @@ const AIPanel = ({
             push("assistant", "I can't hear you in offline mode — try typing or an action button.")
         }
     }, [push, aiOnline, publishAi, messages])
+
     const startMic = useCallback(async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({
@@ -251,64 +220,62 @@ const AIPanel = ({
             const AudioCtx = window.AudioContext || window.webkitAudioContext
             const ctx = new AudioCtx()
             const source = ctx.createMediaStreamSource(stream)
-            const processor = ctx.createScriptProcessor(4096, 1, 1)
-            const gain = ctx.createGain()
-            gain.gain.value = 0 // silent monitor (no speaker echo)
-            source.connect(processor)
-            processor.connect(gain)
-            gain.connect(ctx.destination)
 
-            const rec = recordingRef.current
-            rec.ctx = ctx
-            rec.stream = stream
-            rec.accum = []
-            rec.silentBlocks = 0
-            rec.sampleRate = ctx.sampleRate || 48000
-            rec.lastFlush = Date.now()
+            // Instantiate AudioWorklet via in-memory Blob URL
+            const blob = new Blob([VOICE_PROCESSOR_CODE], { type: "application/javascript" })
+            const workletUrl = URL.createObjectURL(blob)
+            await ctx.audioWorklet.addModule(workletUrl)
+            URL.revokeObjectURL(workletUrl)
 
-            processor.onaudioprocess = e => {
-                const channel = e.inputBuffer.getChannelData(0)
-                rec.accum.push(new Float32Array(channel))
-                const rms = blockRms(channel)
-                rec.silentBlocks = rms < SILENCE_RMS ? rec.silentBlocks + 1 : 0
+            const workletNode = new AudioWorkletNode(ctx, "voice-capture-processor", {
+                processorOptions: {
+                    sampleRate: ctx.sampleRate || 48000,
+                    silenceRms: SILENCE_RMS,
+                    maxSliceMs: MAX_SLICE_MS,
+                },
+            })
 
-                const now = Date.now()
-                const hasAudio =
-                    rec.accum.reduce((a, c) => a + c.length, 0) / rec.sampleRate
-                const silenceEnded =
-                    rec.silentBlocks >= SILENT_BLOCKS_FOR_END && hasAudio > 0.4
-                const sliceExpired =
-                    now - rec.lastFlush >= MAX_SLICE_MS && hasAudio >= 1.0
-                if (silenceEnded || sliceExpired) {
-                    rec.lastFlush = now
-                    finalizeSlice()
+            workletNode.port.onmessage = e => {
+                if (e.data && e.data.type === "audio_slice") {
+                    handleAudioSlice(e.data.samples, e.data.sampleRate)
                 }
             }
 
-            rec.processor = processor
+            source.connect(workletNode)
+
+            recordingRef.current = {
+                ctx,
+                stream,
+                workletNode,
+            }
             setRecording(true)
             setMicBlocked(false)
         } catch (err) {
             console.error("[AIPanel] Mic error:", err)
             setMicBlocked(true)
         }
-    }, [finalizeSlice])
+    }, [handleAudioSlice])
 
     const stopMic = useCallback(() => {
         const rec = recordingRef.current
-        if (rec.processor) rec.processor.disconnect()
-        if (rec.stream) rec.stream.getTracks().forEach(t => t.stop())
-        if (rec.ctx) rec.ctx.close().catch(() => {})
-        finalizeSlice()
+        if (rec.workletNode) {
+            rec.workletNode.port.postMessage({ command: "flush" })
+            rec.workletNode.disconnect()
+        }
+        if (rec.stream) {
+            rec.stream.getTracks().forEach(t => t.stop())
+        }
+        if (rec.ctx) {
+            rec.ctx.close().catch(() => {})
+        }
         recordingRef.current = {}
         setRecording(false)
-    }, [finalizeSlice])
+    }, [])
 
     return (
         <div className="border" style={{ margin: "10px", padding: "10px" }}>
             <h2 style={{ marginTop: 0 }}>AI Assistant</h2>
 
-            {/* Health row: AI service + speaker status */}
             <div style={{ display: "flex", gap: "14px", alignItems: "center", fontSize: "0.72rem", marginBottom: "8px" }}>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
                     <span style={{ width: 9, height: 9, borderRadius: "50%", background: health.color, display: "inline-block" }} />
@@ -336,7 +303,7 @@ const AIPanel = ({
                     </button>
                 </span>
             </div>
-            {/* Chat log */}
+
             <div ref={chatRef} style={{ height: 200, overflowY: "auto", border: "1px solid var(--c3-grey)", borderRadius: 4, padding: "8px", marginBottom: "8px" }}>
                 {messages.length === 0 && (
                     <div className="label" style={{ textAlign: "center", paddingTop: 70 }}>
@@ -364,7 +331,6 @@ const AIPanel = ({
                 ))}
             </div>
 
-            {/* Input + mic */}
             <div style={{ display: "flex", gap: "6px", marginBottom: "10px" }}>
                 <input
                     type="text"
@@ -399,7 +365,6 @@ const AIPanel = ({
                 </div>
             )}
 
-            {/* Action cards (canonical table): docs/future-roadmap/ai-voice/actions.json */}
             <div className="label" style={{ fontWeight: "bold", marginBottom: 4 }}>Actions</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
                 {ACTIONS.map(a => (

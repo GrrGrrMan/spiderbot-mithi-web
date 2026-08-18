@@ -45,7 +45,7 @@ function App() {
         return undefined
     }, [activeView])
 
-    const { isConnected, telemetry, logs, config, deviceId, camTelemetry, camConfig, publishThrottled, publishImmediate, clearLogs, aiMessages, aiStatus, audioStatus, publishAi, publishAudio } = useMqtt()
+    const { isConnected, telemetry, logs, config, deviceId, camTelemetry, camConfig, publishThrottled, publishImmediate, clearLogs, clearAiMessages, aiMessages, aiStatus, audioStatus, publishAi, publishAudio } = useMqtt()
 
     useEffect(() => {
         if (!config || !config.dimensions) return
@@ -105,6 +105,7 @@ function App() {
             publishAi={publishAi}
             publishAudio={publishAudio}
             aiMessages={aiMessages}
+            clearAiMessages={clearAiMessages}
             aiStatus={aiStatus}
             audioStatus={audioStatus}
             isConnected={isConnected}
@@ -156,7 +157,7 @@ function App() {
                 <div id="plot" className="border" hidden={!inHexapodPage}>
                     {inHexapodPage && (
                         <ViewportToggle
-                            activeView={activeView}
+                            activeView={activeView}processor
                             onChange={setActiveView}
                         />
                     )}

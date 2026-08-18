@@ -9,6 +9,8 @@ import {
     expandGaitSequence,
 } from "../hexapod/solvers/motionSynthesizer"
 import { DEFAULT_POSE, DEFAULT_DIMENSIONS, DEFAULT_IK_PARAMS } from "../templates"
+import { generatePresetFramesAsync } from "../hexapod/solvers/motionSynthesizer"
+
 
 const LEGS = ["leftFront", "rightFront", "leftMiddle", "rightMiddle", "leftBack", "rightBack"]
 
@@ -105,6 +107,17 @@ describe("generatePresetFrames", () => {
         expect(frames).toHaveLength(11)
         expect(frames[0]).toEqual(start)
         expect(frames[10]).toEqual(DEFAULT_POSE)
+    })
+})
+
+describe("generatePresetFramesAsync", () => {
+    test("async Web Worker offload returns correct frame sequence", async () => {
+        const start = makePose(0)
+        // Tests fall back gracefully to the synchronous path in Jest automatically 
+        const frames = await generatePresetFramesAsync("wave", DEFAULT_DIMENSIONS, 1, start, 10)
+        expect(frames.length).toBeGreaterThan(1)
+        expect(frames[0]).toEqual(start)
+        expect(frames[frames.length - 1]).toEqual(DEFAULT_POSE)
     })
 })
 

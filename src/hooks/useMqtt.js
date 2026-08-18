@@ -85,6 +85,13 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         setLogs([])
     }, [])
 
+    // P5 — AI voice: clear the remote-assistant reply cache so a "Clear chat"
+    // actually resets the conversation (prevents stale aiMessages from
+    // re-populating the panel via the AIPanel merge effect).
+    const clearAiMessages = useCallback(() => {
+        setAiMessages([])
+    }, [])
+
 
     useEffect(() => {
         const resolvedUrl = brokerUrlOverride || getBrokerUrl()
@@ -133,6 +140,11 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
                         setCamTelemetry(parsed)
                     } else {
                         setTelemetry(parsed)
+                        if (parsed.pose && typeof window !== "undefined") {
+                            window.dispatchEvent(
+                                new CustomEvent("hexapod-telemetry-frame", { detail: parsed.pose })
+                            )
+                        }
                     }
                 } catch (e) {
                     console.error("[MQTT WebUI] Telemetry parse error:", e)
@@ -263,5 +275,5 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         console.log(`[MQTT WebUI] Audio Publish -> [${topic}]:`, payload)
     }, [isConnected, deviceId])
 
-    return { isConnected, telemetry, logs, config, deviceId, camDeviceId, camTelemetry, camConfig, aiMessages, aiStatus, audioStatus, publishThrottled, publishImmediate, publishAi, publishAudio, clearLogs }
+    return { isConnected, telemetry, logs, config, deviceId, camDeviceId, camTelemetry, camConfig, aiMessages, aiStatus, audioStatus, publishThrottled, publishImmediate, publishAi, publishAudio, clearLogs, clearAiMessages }
 }
