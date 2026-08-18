@@ -1,36 +1,27 @@
 // web-ui/src/hooks/usePoseFrameStream.js
-// Chunk 2 — streams an array of interpolated poses to the robot at <=10Hz.
-//
-// The firmware control loop runs at 100 Hz with a 2 s command watchdog, and the
-// web-ui `publishThrottled` already enforces a 100 ms floor. We publish at
-// 120 ms (~8.3 Hz) so every frame is a fresh watchdog reset without tripping the
-// throttle. The stream stops automatically at the end of the sequence; call the
-// returned `stop()` to halt early (e.g. when the user switches presets).
-//
-// The publish callback is held in a ref so callers can pass inline closures
-// without restarting an in-flight stream; only a new `frames` array (or a
-// change of `enabled` / `intervalMs`) restarts it.
 import { useEffect, useRef, useCallback } from "react"
 
-const DEFAULT_INTERVAL_MS = 120 // ~8.3 Hz — safely under the 10 Hz firmware throttle
+const FPS = 60
+const PUBLISH_HZ = 10
 
 export const usePoseFrameStream = (
     frames = [],
     onPublish = () => {},
-    { intervalMs = DEFAULT_INTERVAL_MS, enabled = true } = {}
+    { fps = FPS, publishHz = PUBLISH_HZ, enabled = true, onComplete = () => {} } = {}
 ) => {
-    const timerRef = useRef(null)
-    const indexRef = useRef(0)
+    const reqRef = useRef(null)
     const framesRef = useRef(frames)
     const onPublishRef = useRef(onPublish)
+    const onCompleteRef = useRef(onComplete)
 
     framesRef.current = frames
     onPublishRef.current = onPublish
+    onCompleteRef.current = onComplete
 
     const stop = useCallback(() => {
-        if (timerRef.current !== null) {
-            clearInterval(timerRef.current)
-            timerRef.current = null
+        if (reqRef.current !== null) {
+            cancelAnimationFrame(reqRef.current)
+            reqRef.current = null
         }
     }, [])
 
@@ -39,21 +30,48 @@ export const usePoseFrameStream = (
         if (!enabled || !framesRef.current || framesRef.current.length === 0) {
             return undefined
         }
-        indexRef.current = 0
-        timerRef.current = setInterval(() => {
-            const pose = framesRef.current[indexRef.current]
-            if (pose === undefined) {
+
+        let startTime = performance.now()
+        let lastPublish = 0
+        const frameDuration = 1000 / fps
+        const publishInterval = 1000 / publishHz
+
+        const tick = (now) => {
+            const elapsed = now - startTime
+            let frameIdx = Math.floor(elapsed / frameDuration)
+
+            // 1. Sequence Completion
+            if (frameIdx >= framesRef.current.length) {
+                frameIdx = framesRef.current.length - 1
+                const finalPose = framesRef.current[frameIdx]
+                
+                // Final visual render & network publish
+                window.dispatchEvent(new CustomEvent('hexapod-anim-frame', { detail: finalPose }))
+                onPublishRef.current(finalPose)
+                
+                // Sync React state globally now that the animation is over
+                onCompleteRef.current(finalPose)
                 stop()
                 return
             }
-            onPublishRef.current(pose)
-            indexRef.current += 1
-        }, intervalMs)
+
+            const currentPose = framesRef.current[frameIdx]
+
+            // 2. High-Speed Visual Update @ 60FPS (Bypasses React Reconciliation)
+            window.dispatchEvent(new CustomEvent('hexapod-anim-frame', { detail: currentPose }))
+
+            // 3. Throttled Physical Publish @ 10Hz
+            if (now - lastPublish >= publishInterval) {
+                onPublishRef.current(currentPose)
+                lastPublish = now
+            }
+
+            reqRef.current = requestAnimationFrame(tick)
+        }
+
+        reqRef.current = requestAnimationFrame(tick)
         return stop
-        // frames changes identity per stream; keep the publish fn in a ref so
-        // new closures don't restart the timer.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [frames, enabled, intervalMs, stop])
+    }, [frames, enabled, fps, publishHz, stop])
 
     return { stop }
 }

@@ -8,7 +8,7 @@
 import React, { useState, useCallback, useEffect } from "react"
 import { SECTION_NAMES } from "../vars"
 import { DEFAULT_POSE, DEFAULT_DIMENSIONS } from "../../templates"
-import { generatePresetFrames } from "../../hexapod/solvers/motionSynthesizer"
+import { generatePresetFramesAsync } from "../../hexapod/solvers/motionSynthesizer"
 import { buildServoBatchPayload } from "../../utils/servoMapper"
 import { usePoseFrameStream } from "../../hooks/usePoseFrameStream"
 
@@ -31,7 +31,8 @@ const btnStyle = {
     fontSize: "0.75rem",
 }
 
-const PresetsPage = ({ onMount = () => {}, publishThrottled = () => {}, params = {} }) => {
+// Added onUpdate to the destructured props here!
+const PresetsPage = ({ onMount = () => {}, onUpdate = () => {}, publishThrottled = () => {}, params = {} }) => {
     const dimensions = (params && params.dimensions) || DEFAULT_DIMENSIONS
     const startPose = (params && params.pose) || DEFAULT_POSE
     const [frames, setFrames] = useState([])
@@ -47,12 +48,21 @@ const PresetsPage = ({ onMount = () => {}, publishThrottled = () => {}, params =
         [publishThrottled]
     )
 
-    const { stop } = usePoseFrameStream(frames, publishPose)
+    // Phase 2: Sync global App state only when the 60FPS animation completes
+    const { stop } = usePoseFrameStream(frames, publishPose, {
+        onComplete: (finalPose) => {
+            onUpdate("pose", { pose: finalPose })
+        }
+    })
 
+    // This is the play function that was missing!
     const play = name => {
         stop()
         setActivePreset(name)
-        setFrames(generatePresetFrames(name, dimensions, 3, startPose, 10))
+        // Phase 1 Async Web Worker Quintic offload
+        generatePresetFramesAsync(name, dimensions, 3, startPose, 30).then(generatedFrames => {
+            setFrames(generatedFrames)
+        })
     }
 
     const stopAll = () => {
