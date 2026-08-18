@@ -16,8 +16,8 @@ describe("ViewportToggle", () => {
         const camTab = screen.getByTestId("viewport-toggle-cam")
         expect(simTab).toHaveAttribute("role", "tab")
         expect(camTab).toHaveAttribute("role", "tab")
-        expect(simTab).toHaveAttribute("aria-pressed", "true")
-        expect(camTab).toHaveAttribute("aria-pressed", "false")
+        expect(simTab).toHaveAttribute("aria-selected", "true")
+        expect(camTab).toHaveAttribute("aria-selected", "false")
     })
 
     it("fires onChange('cam') when the CAM tab is clicked", () => {
@@ -42,21 +42,21 @@ describe("ViewportToggle", () => {
             <ViewportToggle activeView="sim" onChange={() => {}} />
         )
         expect(screen.getByTestId("viewport-toggle-sim")).toHaveAttribute(
-            "aria-pressed",
+            "aria-selected",
             "true"
         )
         expect(screen.getByTestId("viewport-toggle-cam")).toHaveAttribute(
-            "aria-pressed",
+            "aria-selected",
             "false"
         )
 
         rerender(<ViewportToggle activeView="cam" onChange={() => {}} />)
         expect(screen.getByTestId("viewport-toggle-sim")).toHaveAttribute(
-            "aria-pressed",
+            "aria-selected",
             "false"
         )
         expect(screen.getByTestId("viewport-toggle-cam")).toHaveAttribute(
-            "aria-pressed",
+            "aria-selected",
             "true"
         )
     })

@@ -6,29 +6,19 @@ const getBrokerUrl = () => {
     const params = new URLSearchParams(window.location.search)
     const queryBroker = params.get("broker")
 
-    // Pick ws:// vs wss:// to match the page's protocol so browsers don't block
-    // the WebSocket as mixed-content when the page is served over HTTPS.
-    // On HTTPS we also point at Caddy's WSS-terminating listener on :9443,
-    // because mosquitto's plain-WS listener on :9001 is already taken; Caddy
-    // strips TLS and forwards plaintext to ws://127.0.0.1:9001. On HTTP we
-    // use the broker directly on :9001.
     const isHttps = window.location.protocol === "https:"
     const wsScheme = isHttps ? "wss" : "ws"
     const wsPort = isHttps ? "9443" : "9001"
 
-    // 1. Manual override via URL (e.g., http://localhost:3000/?broker=pi-hub.local)
     if (queryBroker) {
         return `${wsScheme}://${queryBroker}:${wsPort}`
     }
 
     const hostname = window.location.hostname
-
-    // 2. Development Mode: Fallback to the EMQX cloud broker for Wokwi testing
     if (hostname === "localhost" || hostname === "127.0.0.1") {
         return "ws://broker.emqx.io:8083/mqtt"
     }
 
-    // 3. Production Mode: Auto-resolve to RPi's active address (192.168.4.1 or pi-hub.local)
     return `${wsScheme}://${hostname}:${wsPort}`
 }
 
@@ -45,16 +35,6 @@ const getDeviceId = (defaultId = "hexapod-s3-01") => {
     return queryDevice || defaultId
 }
 
-// P6b servo cutover: the web-ui publishes commands/heartbeat/AI/audio to the
-// *controller* device (S3) by default, but the camera feed comes from a
-// separate device (CAM). The CAM stream is sourced independently so that
-// decoupling the camera from the controller doesn't break the MJPEG viewer.
-//
-// Override either via URL:
-//   ?device=<id>      -> controller/target device (default: hexapod-s3-01)
-//   ?cam=<id>         -> camera-source device      (default: hexapod-cam-01)
-// The CAM device is only subscribed (config + telemetry); we never publish
-// to it.
 const getCameraDeviceId = (defaultId = "hexapod-cam-01") => {
     const params = new URLSearchParams(window.location.search)
     const queryCam = params.get("cam")
@@ -68,30 +48,24 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
     const [telemetry, setTelemetry] = useState(null)
     const [logs, setLogs] = useState([])
     const [config, setConfig] = useState(null)
-    // P6b servo cutover: camera-feed source state. Kept independent of
-    // `config` / `telemetry` so the MJPEG viewer still resolves when the
-    // controller device (S3) doesn't emit mjpeg_url.
     const [camTelemetry, setCamTelemetry] = useState(null)
     const [camConfig, setCamConfig] = useState(null)
-    // P5 — AI voice layer state: chat messages, AI service health, S3 audio playback status
     const [aiMessages, setAiMessages] = useState([])
     const [aiStatus, setAiStatus] = useState(null)
     const [audioStatus, setAudioStatus] = useState(null)
+
     const clientRef = useRef(null)
     const lastPublishRef = useRef(0)
     const pendingPublishRef = useRef(null)
     const trailingTimerRef = useRef(null)
+
     const clearLogs = useCallback(() => {
         setLogs([])
     }, [])
 
-    // P5 — AI voice: clear the remote-assistant reply cache so a "Clear chat"
-    // actually resets the conversation (prevents stale aiMessages from
-    // re-populating the panel via the AIPanel merge effect).
     const clearAiMessages = useCallback(() => {
         setAiMessages([])
     }, [])
-
 
     useEffect(() => {
         const resolvedUrl = brokerUrlOverride || getBrokerUrl()
@@ -108,18 +82,15 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
             client.subscribe(`hexapod/${deviceId}/telemetry`)
             client.subscribe(`hexapod/${deviceId}/logs`)
             client.subscribe(`hexapod/${deviceId}/config`)
-            // P5 — AI voice layer
             client.subscribe(`hexapod/${deviceId}/ai`)
             client.subscribe(`hexapod/${deviceId}/ai/status`)
             client.subscribe(`hexapod/${deviceId}/audio/status`)
-            // P6b servo cutover: also subscribe to the camera-source device's
-            // config + telemetry so the MJPEG viewer can resolve the stream
-            // URL independently of the controller device.
+
             if (camDeviceId && camDeviceId !== deviceId) {
                 client.subscribe(`hexapod/${camDeviceId}/telemetry`)
                 client.subscribe(`hexapod/${camDeviceId}/config`)
             }
-            console.log(`[MQTT WebUI] Connected and subscribed to topics for device: ${deviceId}` + (camDeviceId !== deviceId ? ` (cam source: ${camDeviceId})` : ""))
+            console.log(`[MQTT WebUI] Connected and subscribed to device: ${deviceId} (cam: ${camDeviceId})`)
         })
 
         client.on("close", () => {
@@ -128,9 +99,6 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
 
         client.on("message", (topic, message) => {
             const payload = message.toString()
-            // P6b servo cutover: route telemetry/config by which device
-            // emitted it so the controller's telemetry doesn't clobber the
-            // camera's.
             const isCamTopic = camDeviceId && topic.startsWith(`hexapod/${camDeviceId}/`)
 
             if (topic.endsWith("telemetry")) {
@@ -192,22 +160,20 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
                 client.end()
             }
         }
-    }, [brokerUrlOverride, deviceId])
+    }, [brokerUrlOverride, deviceId, camDeviceId])
 
     useEffect(() => {
         if (!isConnected || !clientRef.current) return
 
-        // Periodically publishes a lightweight heartbeat to reset the ESP32 safety watchdog
         const heartbeatInterval = setInterval(() => {
             const targetTopic = `hexapod/${deviceId}/cmd`
             const payload = JSON.stringify({ type: "heartbeat" })
-            
             try {
                 clientRef.current.publish(targetTopic, payload)
             } catch (err) {
                 console.error("[MQTT WebUI] Heartbeat publish failed:", err)
             }
-        }, 500) // 500ms intervals (twice as fast as the 1000ms watchdog timeout)
+        }, 500)
 
         return () => {
             clearInterval(heartbeatInterval)
@@ -226,7 +192,7 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         const now = Date.now()
         const elapsed = now - lastPublishRef.current
 
-        if (elapsed >= 100) { // 100ms = 10Hz
+        if (elapsed >= 100) {
             clientRef.current.publish(targetTopic, JSON.stringify(payload))
             lastPublishRef.current = now
             pendingPublishRef.current = null
@@ -237,9 +203,6 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
             return
         }
 
-        // Inside the throttle window: remember the latest value and
-        // guarantee it still gets sent once the window closes, even if
-        // this was the last change before releasing the slider.
         pendingPublishRef.current = { targetTopic, payload }
         if (!trailingTimerRef.current) {
             trailingTimerRef.current = setTimeout(() => {
@@ -260,7 +223,6 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         console.log(`[MQTT WebUI] Immediate Publish -> [${targetTopic}]:`, payload)
     }, [isConnected, deviceId])
 
-    // P5 — AI voice layer publishing helpers (topics are already device-scoped)
     const publishAi = useCallback(payload => {
         if (!clientRef.current || !isConnected) return
         const topic = `hexapod/${deviceId}/ai`
@@ -275,5 +237,23 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         console.log(`[MQTT WebUI] Audio Publish -> [${topic}]:`, payload)
     }, [isConnected, deviceId])
 
-    return { isConnected, telemetry, logs, config, deviceId, camDeviceId, camTelemetry, camConfig, aiMessages, aiStatus, audioStatus, publishThrottled, publishImmediate, publishAi, publishAudio, clearLogs, clearAiMessages }
+    return { 
+        isConnected, 
+        telemetry, 
+        logs, 
+        config, 
+        deviceId, 
+        camDeviceId, 
+        camTelemetry, 
+        camConfig, 
+        aiMessages, 
+        aiStatus, 
+        audioStatus, 
+        publishThrottled, 
+        publishImmediate, 
+        publishAi, 
+        publishAudio, 
+        clearLogs, 
+        clearAiMessages 
+    }
 }

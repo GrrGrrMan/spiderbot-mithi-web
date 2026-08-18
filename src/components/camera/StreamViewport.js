@@ -1,26 +1,9 @@
 // web-ui/src/components/camera/StreamViewport.js
-//
-// P2 Phase C fix (2026-08-16): transport switched from a bare no-cors <img>
-// pointed straight at the multipart stream to fetch() + ReadableStream MJPEG
-// parsing -> blob: URL per frame.
-//
-// WHY: Chromium fires <img>.onLoad once per CONNECTION (not per frame) for
-// multipart/x-mixed-replace, so the old onLoad-based FPS + stall watchdog mis-
-// fired on a healthy stream (FPS always "<1", spurious remounts, eventual false
-// "lost"). Parsing frames ourselves gives REAL per-frame events: honest FPS,
-// honest stall detection, and clean "lost"/recovery signalling to the parent
-// (which shows OfflinePlaceholder).
-//
-// Contract: url must be CORS-accessible (fetch). The CAM's :81/stream now emits
-// Access-Control-Allow-Origin: * (CameraServer.cpp). The boundary token is read
-// from the response Content-Type, so this parses both the mock fixture and the
-// ESP32 CameraServer wire format generically.
-
 import React, { useEffect, useRef, useState, useCallback } from "react"
 import StreamStatusBar from "./StreamStatusBar"
 
 const STALL_MS = 3000 // no frame for this long -> "stalled" badge
-const LOST_MS = 8000 // no frame for this long -> notify parent (placeholder)
+const LOST_MS = 8000  // no frame for this long -> notify parent (placeholder)
 const FPS_WINDOW_MS = 2000 // sliding window for the FPS EMA
 
 const StreamViewport = ({ url, isConnected, onStatus }) => {
@@ -28,7 +11,6 @@ const StreamViewport = ({ url, isConnected, onStatus }) => {
     const [stalled, setStalled] = useState(false)
     const [fps, setFps] = useState(0)
 
-    const genRef = useRef(0) // invalidates stale async work on url/unmount
     const aborterRef = useRef(null)
     const lastFrameRef = useRef(0)
     const emaFpsRef = useRef(0)
@@ -50,18 +32,22 @@ const StreamViewport = ({ url, isConnected, onStatus }) => {
             return undefined
         }
 
-        const gen = ++genRef.current
+        let isCancelled = false
         const ac = new AbortController()
         aborterRef.current = ac
 
         let buffer = "" // latin1 binary string; JPEG bytes map 1:1 to chars
-        const bytesToLatin1 = bytes => { let s = ""; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return s }
+        const bytesToLatin1 = bytes => {
+            let s = ""
+            for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i])
+            return s
+        }
         const frames = []
         let lastFrame = Date.now()
         let connected = false
 
         const pushFrame = bytes => {
-            if (genRef.current !== gen) return
+            if (isCancelled) return
             const now = Date.now()
             setBlobUrl(prev => {
                 if (prev) URL.revokeObjectURL(prev)
@@ -94,7 +80,7 @@ const StreamViewport = ({ url, isConnected, onStatus }) => {
         const run = async () => {
             try {
                 const res = await fetch(url, { signal: ac.signal })
-                if (genRef.current !== gen) return
+                if (isCancelled) return
                 if (!res.ok || !res.body) throw new Error(`stream HTTP ${res.status}`)
                 connected = true
 
@@ -107,7 +93,7 @@ const StreamViewport = ({ url, isConnected, onStatus }) => {
                 const reader = res.body.getReader()
                 for (;;) {
                     const { value, done } = await reader.read()
-                    if (genRef.current !== gen) return
+                    if (isCancelled) return
                     if (done) break
                     buffer += bytesToLatin1(value)
 
@@ -132,17 +118,16 @@ const StreamViewport = ({ url, isConnected, onStatus }) => {
                     }
                 }
             } catch (err) {
-                if (genRef.current !== gen) return
+                if (isCancelled) return
                 if (err && err.name === "AbortError") return
-                // Refused / reset before we ever got frames -> definitely lost.
                 if (!connected) notifyLost(true)
             }
         }
         run()
 
-        // Stall/lost watchdog over real frame-arrival timestamps.
+        // Watchdog over real frame-arrival timestamps
         const id = setInterval(() => {
-            if (genRef.current !== gen) return
+            if (isCancelled) return
             const gap = Date.now() - lastFrame
             if (gap > LOST_MS) {
                 setStalled(true)
@@ -155,7 +140,7 @@ const StreamViewport = ({ url, isConnected, onStatus }) => {
         }, 1000)
 
         return () => {
-            genRef.current++
+            isCancelled = true
             ac.abort()
             clearInterval(id)
             setBlobUrl(prev => {
@@ -165,7 +150,6 @@ const StreamViewport = ({ url, isConnected, onStatus }) => {
         }
     }, [url, notifyLost])
 
-    // url null, or never-arrived stream, or lost (parent owns the placeholder).
     if (!url || !blobUrl || lostRef.current) return null
 
     const wrapperStyle = {

@@ -27,7 +27,8 @@ export const usePoseFrameStream = (
 
     useEffect(() => {
         stop()
-        if (!enabled || !framesRef.current || framesRef.current.length === 0) {
+        const activeFrames = framesRef.current
+        if (!enabled || !Array.isArray(activeFrames) || activeFrames.length === 0) {
             return undefined
         }
 
@@ -37,33 +38,44 @@ export const usePoseFrameStream = (
         const publishInterval = 1000 / publishHz
 
         const tick = (now) => {
-            const elapsed = now - startTime
-            let frameIdx = Math.floor(elapsed / frameDuration)
-
-            // 1. Sequence Completion
-            if (frameIdx >= framesRef.current.length) {
-                frameIdx = framesRef.current.length - 1
-                const finalPose = framesRef.current[frameIdx]
-                
-                // Final visual render & network publish
-                window.dispatchEvent(new CustomEvent('hexapod-anim-frame', { detail: finalPose }))
-                onPublishRef.current(finalPose)
-                
-                // Sync React state globally now that the animation is over
-                onCompleteRef.current(finalPose)
+            const currentList = framesRef.current
+            if (!currentList || !Array.isArray(currentList) || currentList.length === 0) {
                 stop()
                 return
             }
 
-            const currentPose = framesRef.current[frameIdx]
+            const elapsed = now - startTime
+            let frameIdx = Math.floor(elapsed / frameDuration)
 
-            // 2. High-Speed Visual Update @ 60FPS (Bypasses React Reconciliation)
-            window.dispatchEvent(new CustomEvent('hexapod-anim-frame', { detail: currentPose }))
+            // 1. Sequence Completion
+            if (frameIdx >= currentList.length) {
+                frameIdx = currentList.length - 1
+                if (frameIdx >= 0 && frameIdx < currentList.length) {
+                    const finalFrame = currentList[frameIdx]
+                    if (finalFrame && typeof finalFrame === "object") {
+                        const finalPose = finalFrame.pose || finalFrame
+                        window.dispatchEvent(new CustomEvent('hexapod-anim-frame', { detail: finalFrame }))
+                        if (onPublishRef.current) onPublishRef.current(finalPose)
+                        if (onCompleteRef.current) onCompleteRef.current(finalPose)
+                    }
+                }
+                stop()
+                return
+            }
 
-            // 3. Throttled Physical Publish @ 10Hz
-            if (now - lastPublish >= publishInterval) {
-                onPublishRef.current(currentPose)
-                lastPublish = now
+            if (frameIdx >= 0 && frameIdx < currentList.length) {
+                const currentFrame = currentList[frameIdx]
+                if (currentFrame && typeof currentFrame === "object") {
+                    // 2. High-Speed Visual Update @ 60FPS (carries { pose, twist } to Plotly)
+                    window.dispatchEvent(new CustomEvent('hexapod-anim-frame', { detail: currentFrame }))
+
+                    // 3. Throttled Physical Publish @ 10Hz (extracts plain pose for MQTT)
+                    if (now - lastPublish >= publishInterval) {
+                        const rawPose = currentFrame.pose || currentFrame
+                        if (onPublishRef.current) onPublishRef.current(rawPose)
+                        lastPublish = now
+                    }
+                }
             }
 
             reqRef.current = requestAnimationFrame(tick)

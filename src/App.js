@@ -1,6 +1,6 @@
 // web-ui/src/App.js
 import React, { useState, useEffect } from "react"
-import { BrowserRouter as Router } from "react-router-dom"
+import { BrowserRouter as Router, useLocation } from "react-router-dom"
 import { DEFAULT_POSE } from "./templates"
 import { SECTION_NAMES } from "./components/vars"
 import { Nav, NavDetailed, DimensionsWidget, ConsoleDrawer } from "./components"
@@ -14,29 +14,23 @@ window.dataLayer = window.dataLayer || []
 function gtag() {
     window.dataLayer.push(arguments)
 }
-function App() {
+
+function MainLayout() {
+    const location = useLocation()
+    const isJudgementView = location.pathname === "/judgement"
+
     const [inHexapodPage, setInHexapodPage] = useState(false)
     const [hexapod, setHexapod] = useState(() => updateHexapod("default"))
     const [revision, setRevision] = useState(0)
 
-    // P2 Phase B: stage viewport mode. The camera is a stage-swap inside
-    // #plot, NOT a nav page (see docs/future-roadmap/camera/README.md §B).
-    // Deep-link via ?view=camera so /camera (redirected from AppHelpers)
-    // lands the user in CAM mode without an extra click.
     const [activeView, setActiveView] = useState(() => {
         if (typeof window === "undefined") return "sim"
         const params = new URLSearchParams(window.location.search)
         return params.get("view") === "camera" ? "cam" : "sim"
     })
 
-    // When the user flips back from CAM to SIM, force Plotly to recompute
-    // its container dimensions. Without this the canvas stays at the
-    // pre-swap size (the common React-Plotly "left over" bug).
     useEffect(() => {
         if (activeView === "sim") {
-            // requestAnimationFrame defers until the DOM has swapped in the
-            // HexapodPlot node; the resize event then triggers Plotly's
-            // relayout pass.
             const id = requestAnimationFrame(() => {
                 window.dispatchEvent(new Event("resize"))
             })
@@ -45,7 +39,24 @@ function App() {
         return undefined
     }, [activeView])
 
-    const { isConnected, telemetry, logs, config, deviceId, camTelemetry, camConfig, publishThrottled, publishImmediate, clearLogs, clearAiMessages, aiMessages, aiStatus, audioStatus, publishAi, publishAudio } = useMqtt()
+    const {
+        isConnected,
+        telemetry,
+        logs,
+        config,
+        deviceId,
+        camTelemetry,
+        camConfig,
+        publishThrottled,
+        publishImmediate,
+        clearLogs,
+        clearAiMessages,
+        aiMessages,
+        aiStatus,
+        audioStatus,
+        publishAi,
+        publishAudio,
+    } = useMqtt()
 
     useEffect(() => {
         if (!config || !config.dimensions) return
@@ -61,7 +72,6 @@ function App() {
             tibia: Math.round(tibia),
         }
 
-        // Only trigger a state update if dimensions differ from active hexapod model
         const curDims = hexapod.dimensions
         const hasChanged = Object.keys(translatedDimensions).some(
             key => translatedDimensions[key] !== curDims[key]
@@ -110,6 +120,10 @@ function App() {
             audioStatus={audioStatus}
             isConnected={isConnected}
             aiDeviceId={deviceId}
+            camConfig={camConfig}
+            camTelemetry={camTelemetry}
+            hexapod={hexapod}
+            revision={revision}
             params={{
                 dimensions: hexapod.dimensions,
                 pose: hexapod.pose,
@@ -118,19 +132,19 @@ function App() {
     )
 
     return (
-        <Router>
+        <>
             <Nav isConnected={isConnected} />
-            <div id="main">
-                <div id="sidebar">
-                    {/* Live connection & telemetry HUD widget */}
+            <div id="main" style={isJudgementView ? { display: "block" } : undefined}>
+                <div id="sidebar" style={isJudgementView ? { width: "100%", maxWidth: "100%", margin: 0 } : undefined}>
+                    {/* Live connection & telemetry widget */}
                     <div className="border" style={{ marginBottom: "15px", padding: "10px" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <span style={{ fontSize: "0.75rem", fontWeight: "bold" }}>ROBOT STATUS:</span>
-                            <span 
-                                style={{ 
-                                    fontSize: "0.75rem", 
+                            <span
+                                style={{
+                                    fontSize: "0.75rem",
                                     color: isConnected ? "var(--c1-green)" : "var(--c6-red)",
-                                    fontWeight: "bolder"
+                                    fontWeight: "bolder",
                                 }}
                             >
                                 {isConnected ? "CONNECTED" : "DISCONNECTED"}
@@ -145,19 +159,23 @@ function App() {
                             </div>
                         )}
                     </div>
-                    <div hidden={!inHexapodPage}>
+
+                    <div hidden={!inHexapodPage || isJudgementView}>
                         <DimensionsWidget
                             params={{ dimensions: hexapod.dimensions }}
                             onUpdate={manageState}
                         />
                     </div>
+
                     <Page pageComponent={pageComponent} />
                     {!inHexapodPage ? <NavDetailed /> : null}
                 </div>
-                <div id="plot" className="border" hidden={!inHexapodPage}>
-                    {inHexapodPage && (
+
+                {/* Hide default right plot container when on the Judgement page (as it renders its own split viewport) */}
+                <div id="plot" className="border" hidden={!inHexapodPage || isJudgementView}>
+                    {inHexapodPage && !isJudgementView && (
                         <ViewportToggle
-                            activeView={activeView}processor
+                            activeView={activeView}
                             onChange={setActiveView}
                         />
                     )}
@@ -176,16 +194,23 @@ function App() {
                 </div>
             </div>
 
-            {/* Place Console Drawer directly below the split viewport container */}
-            <ConsoleDrawer 
+            <ConsoleDrawer
                 telemetry={telemetry}
-                isConnected={isConnected} 
-                logs={logs} 
-                publishImmediate={publishImmediate} 
+                isConnected={isConnected}
+                logs={logs}
+                publishImmediate={publishImmediate}
                 clearLogs={clearLogs}
             />
 
             {inHexapodPage ? <NavDetailed /> : null}
+        </>
+    )
+}
+
+function App() {
+    return (
+        <Router>
+            <MainLayout />
         </Router>
     )
 }

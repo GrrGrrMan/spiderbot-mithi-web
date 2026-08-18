@@ -1,3 +1,4 @@
+// web-ui/src/AppHelpers.js
 import React from "react"
 import { Route, Switch, Redirect } from "react-router-dom"
 import { PATHS } from "./components/vars"
@@ -9,17 +10,12 @@ import {
     ForwardKinematicsPage,
     LegPatternPage,
     LandingPage,
-    CameraPanel,
     SensorPanel,
     AudioPanel,
     AIPanel,
     PresetsPage,
+    JudgementPanel,
 } from "./components/pages"
-
-// P2 Phase B: CameraPanel is still re-exported from ./components/pages for
-// back-compat, but is no longer routed — the camera lives inside #plot as a
-// stage viewport mode. The Redirect above turns /camera into /?view=camera.
-const _cameraPanelKeptForBackCompat = CameraPanel
 
 const UPDATE_TYPES = {
     DEFAULT: "default",
@@ -46,10 +42,6 @@ const Page = ({ pageComponent }) => (
             {pageComponent(WalkingGaitsPage)}
         </Route>
         <Route path={PATHS.camera.path} exact>
-            {/* P2 Phase B: the camera is a stage viewport mode inside #plot,
-                not a nav page. Redirect deep-links to /?view=camera so the
-                App-level activeView state picks them up. The CameraPanel
-                placeholder is kept as the legacy file but no longer routed. */}
             <Redirect to={{ pathname: "/", search: "?view=camera" }} />
         </Route>
         <Route path={PATHS.sensors.path} exact>
@@ -63,6 +55,9 @@ const Page = ({ pageComponent }) => (
         </Route>
         <Route path={PATHS.presets.path} exact>
             {pageComponent(PresetsPage)}
+        </Route>
+        <Route path={PATHS.judgement.path} exact>
+            {pageComponent(JudgementPanel)}
         </Route>
         <Route>
             <Redirect to="/" />
