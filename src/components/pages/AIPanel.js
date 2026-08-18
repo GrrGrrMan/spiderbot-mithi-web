@@ -95,7 +95,13 @@ const AIPanel = ({
     const [presetFrames, setPresetFrames] = useState([])
     const lastDirectiveKeyRef = useRef(null)
 
-    const aiOnline = aiStatus && aiStatus.state === "online"
+    // Treat only truly-offline/error states as offline. A transient "busy"
+    // heartbeat (every 5s while the RPi worker is processing a prior message)
+    // is still online-enough to queue — the RPi worker queue (maxsize=16)
+    // serializes the next message. Misclassifying "busy" as offline would
+    // silently drop the user's message from the MQTT path and emit the
+    // misleading OFFLINE_REPLY even though the RPi is merely busy. (fix 2026-08-18)
+    const aiOnline = aiStatus && aiStatus.state !== "offline" && aiStatus.state !== "error"
     const health = healthOf(aiStatus)
 
     const publishPresetPose = useCallback(
