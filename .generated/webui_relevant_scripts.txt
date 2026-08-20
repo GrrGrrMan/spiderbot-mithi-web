@@ -1,6 +1,6 @@
 # Web-UI Relevant Scripts Collection
 # Generated from: D:\Projects\hexapod-workspaces\V2\web-ui
-# Total files: 118
+# Total files: 121
 #
 
 ================================================================================
@@ -235,7 +235,7 @@ webpack(webpackConfigProd, (err, stats) => {
 
 // web-ui/src/App.js
 import React, { useState, useEffect } from "react"
-import { BrowserRouter as Router } from "react-router-dom"
+import { BrowserRouter as Router, useLocation } from "react-router-dom"
 import { DEFAULT_POSE } from "./templates"
 import { SECTION_NAMES } from "./components/vars"
 import { Nav, NavDetailed, DimensionsWidget, ConsoleDrawer } from "./components"
@@ -249,29 +249,23 @@ window.dataLayer = window.dataLayer || []
 function gtag() {
     window.dataLayer.push(arguments)
 }
-function App() {
+
+function MainLayout() {
+    const location = useLocation()
+    const isJudgementView = location.pathname === "/judgement"
+
     const [inHexapodPage, setInHexapodPage] = useState(false)
     const [hexapod, setHexapod] = useState(() => updateHexapod("default"))
     const [revision, setRevision] = useState(0)
 
-    // P2 Phase B: stage viewport mode. The camera is a stage-swap inside
-    // #plot, NOT a nav page (see docs/future-roadmap/camera/README.md §B).
-    // Deep-link via ?view=camera so /camera (redirected from AppHelpers)
-    // lands the user in CAM mode without an extra click.
     const [activeView, setActiveView] = useState(() => {
         if (typeof window === "undefined") return "sim"
         const params = new URLSearchParams(window.location.search)
         return params.get("view") === "camera" ? "cam" : "sim"
     })
 
-    // When the user flips back from CAM to SIM, force Plotly to recompute
-    // its container dimensions. Without this the canvas stays at the
-    // pre-swap size (the common React-Plotly "left over" bug).
     useEffect(() => {
         if (activeView === "sim") {
-            // requestAnimationFrame defers until the DOM has swapped in the
-            // HexapodPlot node; the resize event then triggers Plotly's
-            // relayout pass.
             const id = requestAnimationFrame(() => {
                 window.dispatchEvent(new Event("resize"))
             })
@@ -280,7 +274,24 @@ function App() {
         return undefined
     }, [activeView])
 
-    const { isConnected, telemetry, logs, config, deviceId, camTelemetry, camConfig, publishThrottled, publishImmediate, clearLogs, clearAiMessages, aiMessages, aiStatus, audioStatus, publishAi, publishAudio } = useMqtt()
+    const {
+        isConnected,
+        telemetry,
+        logs,
+        config,
+        deviceId,
+        camTelemetry,
+        camConfig,
+        publishThrottled,
+        publishImmediate,
+        clearLogs,
+        clearAiMessages,
+        aiMessages,
+        aiStatus,
+        audioStatus,
+        publishAi,
+        publishAudio,
+    } = useMqtt()
 
     useEffect(() => {
         if (!config || !config.dimensions) return
@@ -296,7 +307,6 @@ function App() {
             tibia: Math.round(tibia),
         }
 
-        // Only trigger a state update if dimensions differ from active hexapod model
         const curDims = hexapod.dimensions
         const hasChanged = Object.keys(translatedDimensions).some(
             key => translatedDimensions[key] !== curDims[key]
@@ -345,6 +355,10 @@ function App() {
             audioStatus={audioStatus}
             isConnected={isConnected}
             aiDeviceId={deviceId}
+            camConfig={camConfig}
+            camTelemetry={camTelemetry}
+            hexapod={hexapod}
+            revision={revision}
             params={{
                 dimensions: hexapod.dimensions,
                 pose: hexapod.pose,
@@ -353,19 +367,19 @@ function App() {
     )
 
     return (
-        <Router>
+        <>
             <Nav isConnected={isConnected} />
-            <div id="main">
-                <div id="sidebar">
-                    {/* Live connection & telemetry HUD widget */}
+            <div id="main" style={isJudgementView ? { display: "block" } : undefined}>
+                <div id="sidebar" style={isJudgementView ? { width: "100%", maxWidth: "100%", margin: 0 } : undefined}>
+                    {/* Live connection & telemetry widget */}
                     <div className="border" style={{ marginBottom: "15px", padding: "10px" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <span style={{ fontSize: "0.75rem", fontWeight: "bold" }}>ROBOT STATUS:</span>
-                            <span 
-                                style={{ 
-                                    fontSize: "0.75rem", 
+                            <span
+                                style={{
+                                    fontSize: "0.75rem",
                                     color: isConnected ? "var(--c1-green)" : "var(--c6-red)",
-                                    fontWeight: "bolder"
+                                    fontWeight: "bolder",
                                 }}
                             >
                                 {isConnected ? "CONNECTED" : "DISCONNECTED"}
@@ -380,19 +394,23 @@ function App() {
                             </div>
                         )}
                     </div>
-                    <div hidden={!inHexapodPage}>
+
+                    <div hidden={!inHexapodPage || isJudgementView}>
                         <DimensionsWidget
                             params={{ dimensions: hexapod.dimensions }}
                             onUpdate={manageState}
                         />
                     </div>
+
                     <Page pageComponent={pageComponent} />
                     {!inHexapodPage ? <NavDetailed /> : null}
                 </div>
-                <div id="plot" className="border" hidden={!inHexapodPage}>
-                    {inHexapodPage && (
+
+                {/* Hide default right plot container when on the Judgement page (as it renders its own split viewport) */}
+                <div id="plot" className="border" hidden={!inHexapodPage || isJudgementView}>
+                    {inHexapodPage && !isJudgementView && (
                         <ViewportToggle
-                            activeView={activeView}processor
+                            activeView={activeView}
                             onChange={setActiveView}
                         />
                     )}
@@ -411,16 +429,23 @@ function App() {
                 </div>
             </div>
 
-            {/* Place Console Drawer directly below the split viewport container */}
-            <ConsoleDrawer 
+            <ConsoleDrawer
                 telemetry={telemetry}
-                isConnected={isConnected} 
-                logs={logs} 
-                publishImmediate={publishImmediate} 
+                isConnected={isConnected}
+                logs={logs}
+                publishImmediate={publishImmediate}
                 clearLogs={clearLogs}
             />
 
             {inHexapodPage ? <NavDetailed /> : null}
+        </>
+    )
+}
+
+function App() {
+    return (
+        <Router>
+            <MainLayout />
         </Router>
     )
 }
@@ -431,6 +456,7 @@ export default App
 # FILE: src\AppHelpers.js
 ================================================================================
 
+// web-ui/src/AppHelpers.js
 import React from "react"
 import { Route, Switch, Redirect } from "react-router-dom"
 import { PATHS } from "./components/vars"
@@ -446,6 +472,7 @@ import {
     AudioPanel,
     AIPanel,
     PresetsPage,
+    JudgementPanel,
 } from "./components/pages"
 
 const UPDATE_TYPES = {
@@ -486,6 +513,9 @@ const Page = ({ pageComponent }) => (
         </Route>
         <Route path={PATHS.presets.path} exact>
             {pageComponent(PresetsPage)}
+        </Route>
+        <Route path={PATHS.judgement.path} exact>
+            {pageComponent(JudgementPanel)}
         </Route>
         <Route>
             <Redirect to="/" />
@@ -1006,6 +1036,106 @@ const CameraView = ({ config, telemetry, isConnected }) => {
 }
 
 export default CameraView
+
+================================================================================
+# FILE: src\components\camera\DualStageViewport.js
+================================================================================
+
+// web-ui/src/components/camera/DualStageViewport.js
+import React, { useEffect } from "react"
+import CameraView from "./CameraView"
+import HexapodPlot from "../HexapodPlot"
+
+const DualStageViewport = ({
+    camConfig,
+    camTelemetry,
+    isConnected,
+    hexapod,
+    revision,
+}) => {
+    // Trigger Plotly container dimension recalculation on layout load
+    useEffect(() => {
+        const id = requestAnimationFrame(() => {
+            window.dispatchEvent(new Event("resize"))
+        })
+        return () => cancelAnimationFrame(id)
+    }, [])
+
+    return (
+        <div style={containerStyle} data-testid="dual-stage-viewport">
+            {/* Left Stage: Live MJPEG Camera Feed */}
+            <div style={stageWrapperStyle}>
+                <div style={badgeStyle}>LIVE CAMERA FEED</div>
+                <div style={viewportInnerStyle}>
+                    <CameraView
+                        config={camConfig}
+                        telemetry={camTelemetry}
+                        isConnected={isConnected}
+                    />
+                </div>
+            </div>
+
+            {/* Right Stage: 3D Kinematics Simulation */}
+            <div style={stageWrapperStyle}>
+                <div style={badgeStyle}>3D VIRTUAL SIMULATOR</div>
+                <div style={viewportInnerStyle}>
+                    <HexapodPlot
+                        revision={revision}
+                        hexapod={hexapod}
+                    />
+                </div>
+            </div>
+        </div>
+    )
+}
+
+const containerStyle = {
+    display: "flex",
+    flexDirection: "row",
+    gap: "10px",
+    width: "100%",
+    height: "100%",
+    minHeight: "420px",
+    boxSizing: "border-box",
+}
+
+const stageWrapperStyle = {
+    flex: "1 1 0",
+    minWidth: 0,
+    height: "100%",
+    position: "relative",
+    backgroundColor: "#0a0f1d",
+    border: "1px solid var(--c4-blue)",
+    borderRadius: "8px",
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
+}
+
+const viewportInnerStyle = {
+    position: "relative",
+    width: "100%",
+    flex: 1,
+    height: "100%",
+}
+
+const badgeStyle = {
+    position: "absolute",
+    top: "8px",
+    left: "8px",
+    zIndex: 10,
+    backgroundColor: "rgba(0, 0, 0, 0.65)",
+    border: "1px solid rgba(255, 255, 255, 0.2)",
+    borderRadius: "6px",
+    padding: "3px 8px",
+    color: "#fff",
+    fontSize: "0.65rem",
+    fontWeight: "bold",
+    letterSpacing: "0.05em",
+    pointerEvents: "none",
+}
+
+export default DualStageViewport
 
 ================================================================================
 # FILE: src\components\camera\OfflinePlaceholder.js
@@ -2487,6 +2617,10 @@ const AIPanel = ({
     const lastDirectiveKeyRef = useRef(null)
     const activeReqIdRef = useRef(0)
 
+    // Audio bundling buffer
+    const audioChunksRef = useRef([])
+    const audioSampleRateRef = useRef(48000)
+
     const aiOnline = Boolean(aiStatus && aiStatus.state !== "offline" && aiStatus.state !== "error")
 
     const publishLivePose = useCallback(
@@ -2498,15 +2632,12 @@ const AIPanel = ({
         [publishImmediate]
     )
 
-    const { stop: stopStream } = usePoseFrameStream(activeFrames, publishLivePose, {
-        onComplete: finalPose => {
-            if (finalPose && typeof finalPose === "object") {
-                onUpdate("pose", { pose: finalPose })
-            }
-            setActiveExecutingAction(null)
-            setActiveFrames([])
+    const { stop: stopStream } = usePoseFrameStream(activeFrames, (pose) => {
+        // Only publish to MQTT for direct gesture presets (like Wave/Cheer), NOT during locomotion!
+        if (activeExecutingAction && !["walk_forward", "walk_backward", "turn_left", "turn_right", "spin"].includes(activeExecutingAction)) {
+            publishLivePose(pose);
         }
-    })
+    });
 
     const playPreset = useCallback(
         presetName => {
@@ -2552,7 +2683,9 @@ const AIPanel = ({
         if (!aiMessages || !aiMessages.length) return
         setMessages(prev => {
             const seen = new Set(prev.map(msgKey))
-            const added = aiMessages.filter(m => !seen.has(msgKey(m)))
+            const added = aiMessages
+                .filter(m => m.type !== "audio" && typeof m.content === "string" && m.content.length < 1000)
+                .filter(m => !seen.has(msgKey(m)))
             return added.length ? [...prev, ...added] : prev
         })
     }, [aiMessages])
@@ -2618,18 +2751,27 @@ const AIPanel = ({
         push("assistant", reply || `Triggered action: ${name}`)
     }, [publishAudio, publishImmediate, push, playPreset, playLocomotion, stopStream, onUpdate])
 
+    const getCleanHistory = useCallback(() => {
+        return messages
+            .filter(m => (m.role === "user" || m.role === "assistant") && m.type !== "audio")
+            .filter(m => typeof m.content === "string" && !m.content.startsWith("UklGR") && m.content.length < 500)
+            .slice(-10)
+            .map(m => ({ role: m.role, content: m.content }))
+    }, [messages])
+
     const handleSend = useCallback(() => {
         const text = input.trim()
         if (!text) return
-        push("user", text)
+        push("user", text, "text")
         setInput("")
 
         if (aiOnline) {
-            const history = messages
-                .filter(m => m.role === "user" || m.role === "assistant")
-                .slice(-50)
-                .map(m => ({ role: m.role, content: m.content }))
-            publishAi({ type: "text", role: "user", content: text, history })
+            publishAi({
+                type: "text",
+                role: "user",
+                content: text,
+                history: getCleanHistory()
+            })
             return
         }
 
@@ -2637,15 +2779,60 @@ const AIPanel = ({
         if (action) {
             executeAction(action)
         } else {
-            push("system", "AI Service Offline: No LLM connected on hexapod/" + aiDeviceId + "/ai. Connect the Pi-Hub or select a command button below.")
+            push("system", "AI Service Offline: No LLM connected on hexapod/" + aiDeviceId + "/ai.")
         }
-    }, [input, aiOnline, publishAi, push, executeAction, messages, aiDeviceId])
+    }, [input, aiOnline, publishAi, push, executeAction, getCleanHistory, aiDeviceId])
 
     const handleAudioSlice = useCallback((samples, sampleRate) => {
         const pcm = to16kPcm(samples, sampleRate)
         const wav = buildWav(pcm, 16000)
         const b64 = bytesToBase64(wav)
-        push("user", `🎤 Voice Query (${Math.round(wav.length / 32)}ms audio)`)
+        
+        // Push a nice temporary user bubble
+        push("user", `🎤 Voice Query (${Math.round(wav.length / 32)}ms audio)...`, "text")
+        
+        if (aiOnline) {
+            publishAi({
+                type: "audio",
+                role: "user",
+                content: b64,
+                sample_rate_hz: 16000,
+                history: getCleanHistory()
+            })
+        } else {
+            push("system", "AI Service Offline: Voice transcription requires the live bridge.")
+        }
+    }, [push, aiOnline, publishAi, getCleanHistory])
+
+    // Finalize and bundle all accumulated audio chunks into 1 single log + payload
+    const finalizeAudioRecording = useCallback(() => {
+        const chunks = audioChunksRef.current
+        audioChunksRef.current = []
+
+        if (!chunks || chunks.length === 0) return
+
+        const totalLen = chunks.reduce((acc, c) => acc + c.length, 0)
+        if (totalLen === 0) return
+
+        // Stitch Float32 chunks together
+        const joined = new Float32Array(totalLen)
+        let offset = 0
+        for (let i = 0; i < chunks.length; i++) {
+            joined.set(chunks[i], offset)
+            offset += chunks[i].length
+        }
+
+        const sampleRate = audioSampleRateRef.current || 48000
+        const pcm = to16kPcm(joined, sampleRate)
+        const wav = buildWav(pcm, 16000)
+        const b64 = bytesToBase64(wav)
+        const totalDurationMs = Math.round((pcm.length / 16000) * 1000)
+
+        // Drop accidental micro-clicks (< 200ms)
+        if (totalDurationMs < 200) return
+
+        // 1 SINGLE CONSOLIDATED LOG
+        push("user", `🎤 Voice Query (${totalDurationMs}ms audio)`)
         
         if (aiOnline) {
             const history = messages
@@ -2660,6 +2847,7 @@ const AIPanel = ({
 
     const startMic = useCallback(async () => {
         try {
+            audioChunksRef.current = []
             const stream = await navigator.mediaDevices.getUserMedia({
                 audio: { echoCancellation: true, noiseSuppression: true },
             })
@@ -2680,9 +2868,13 @@ const AIPanel = ({
                 },
             })
 
+            // Buffer audio chunks quietly without spamming chat
             workletNode.port.onmessage = e => {
                 if (e.data && e.data.type === "audio_slice") {
-                    handleAudioSlice(e.data.samples, e.data.sampleRate)
+                    if (e.data.samples && e.data.samples.length > 0) {
+                        audioChunksRef.current.push(e.data.samples)
+                        audioSampleRateRef.current = e.data.sampleRate || 48000
+                    }
                 }
             }
 
@@ -2694,23 +2886,30 @@ const AIPanel = ({
             console.error("[AIPanel] Mic error:", err)
             setMicBlocked(true)
         }
-    }, [handleAudioSlice])
+    }, [])
 
     const stopMic = useCallback(() => {
         const rec = recordingRef.current
         if (rec.workletNode) {
-            rec.workletNode.port.postMessage({ command: "flush" })
-            rec.workletNode.disconnect()
+            try {
+                rec.workletNode.port.postMessage({ command: "flush" })
+            } catch (e) {}
+            
+            // Allow 40ms for the final flush slice to hit the buffer before teardown
+            setTimeout(() => {
+                if (rec.workletNode) rec.workletNode.disconnect()
+                if (rec.stream) rec.stream.getTracks().forEach(t => t.stop())
+                if (rec.ctx) rec.ctx.close().catch(() => {})
+                recordingRef.current = {}
+                setRecording(false)
+                finalizeAudioRecording()
+            }, 40)
+        } else {
+            recordingRef.current = {}
+            setRecording(false)
+            finalizeAudioRecording()
         }
-        if (rec.stream) {
-            rec.stream.getTracks().forEach(t => t.stop())
-        }
-        if (rec.ctx) {
-            rec.ctx.close().catch(() => {})
-        }
-        recordingRef.current = {}
-        setRecording(false)
-    }, [])
+    }, [finalizeAudioRecording])
 
     const stopAll = () => {
         stopStream()
@@ -2760,7 +2959,7 @@ const AIPanel = ({
                 </div>
             </div>
 
-            {/* Honest Health Status Bar */}
+            {/* Health Status Bar */}
             <div style={{ 
                 display: "flex", 
                 flexWrap: "wrap", 
@@ -2814,7 +3013,7 @@ const AIPanel = ({
             >
                 {messages.length === 0 && (
                     <div style={{ textAlign: "center", paddingTop: 55, color: "#64748b", fontSize: "0.75rem" }}>
-                        Click any action button below to animate the 3D model and command the robot.
+                        Click any action button below or hold/press "Talk" to record a command.
                     </div>
                 )}
                 {messages.map((m, i) => {
@@ -2855,7 +3054,7 @@ const AIPanel = ({
                 })}
             </div>
 
-            {/* Input Box */}
+            {/* Input & Record Controls */}
             <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
                 <input
                     type="text"
@@ -2877,9 +3076,15 @@ const AIPanel = ({
                 <button
                     type="button"
                     onClick={recording ? stopMic : startMic}
-                    style={{ ...btnStyle, background: recording ? "var(--c6-red)" : "rgba(23, 33, 43, 0.9)", color: recording ? "#fff" : "var(--c1-green)", height: "2.2rem" }}
+                    style={{ 
+                        ...btnStyle, 
+                        background: recording ? "var(--c6-red)" : "rgba(23, 33, 43, 0.9)", 
+                        color: recording ? "#fff" : "var(--c1-green)", 
+                        height: "2.2rem",
+                        minWidth: "75px"
+                    }}
                     disabled={micBlocked}
-                    title={micBlocked ? "Microphone unavailable" : recording ? "Stop recording" : "Record voice query"}
+                    title={micBlocked ? "Microphone unavailable" : recording ? "Stop and send recording" : "Record voice query"}
                 >
                     {recording ? "⏹ Stop" : "🎤 Talk"}
                 </button>
@@ -3191,8 +3396,8 @@ class InverseKinematicsPage extends Component {
                 pos_x: ikParams.ty * 100.0,  // Web +Y translation -> FW +X
                 pos_y: -ikParams.tx * 100.0, // Web +X translation -> FW -Y
                 pos_z: ikParams.tz * 100.0,  // Height offset
-                roll: ikParams.rx,
-                pitch: ikParams.ry,
+                roll: ikParams.ry,   // Web UI Y-rotation is body Roll
+                pitch: ikParams.rx,  // Web UI X-rotation is body Pitch
                 yaw: ikParams.rz,
                 leg_stance: ikParams.legStance,
                 hip_stance: ikParams.hipStance
@@ -3227,6 +3432,321 @@ class InverseKinematicsPage extends Component {
 }
 
 export default InverseKinematicsPage
+
+================================================================================
+# FILE: src\components\pages\JudgementPanel.js
+================================================================================
+
+import React, { useState, useEffect, useCallback, useRef } from "react"
+import { SECTION_NAMES } from "../vars"
+import { useContinuousWakeWord } from "../../hooks/useContinuousWakeWord"
+import DualStageViewport from "../camera/DualStageViewport"
+import { matchAction } from "../../utils/aiActionMatcher"
+import AI_ACTIONS from "../../constants/aiActions.json"
+import { DEFAULT_POSE, DEFAULT_DIMENSIONS } from "../../templates"
+import { buildServoBatchPayload } from "../../utils/servoMapper"
+import { generatePresetFramesAsync, generateLocomotionFrames } from "../../hexapod/solvers/motionSynthesizer"
+import { usePoseFrameStream } from "../../hooks/usePoseFrameStream"
+
+const ACTIONS = AI_ACTIONS.actions
+
+const JudgementPanel = ({
+    publishImmediate = () => {},
+    publishAi = () => {},
+    publishAudio = () => {},
+    isConnected = false,
+    camConfig = null,
+    camTelemetry = null,
+    hexapod = null,
+    revision = 0,
+    aiStatus = null,
+    aiMessages = [],
+    aiDeviceId = "hexapod-s3-01",
+    params = {},
+    onUpdate = () => {},
+    onMount = () => {},
+}) => {
+    const [actionLog, setActionLog] = useState([])
+    const [activeFrames, setActiveFrames] = useState([])
+    const [executingName, setExecutingName] = useState(null)
+    const activeReqIdRef = useRef(0)
+
+    const aiOnline = Boolean(aiStatus && aiStatus.state !== "offline" && aiStatus.state !== "error")
+
+    const speakFeedback = (text) => {
+        if ("speechSynthesis" in window) {
+            window.speechSynthesis.cancel()
+            const utterance = new SpeechSynthesisUtterance(text)
+            utterance.rate = 1.05
+            utterance.pitch = 1.0
+            window.speechSynthesis.speak(utterance)
+        }
+    }
+
+    const publishLivePose = useCallback(
+        (pose) => {
+            if (pose && typeof pose === "object") {
+                publishImmediate("hexapod/cmd", buildServoBatchPayload(pose))
+            }
+        },
+        [publishImmediate]
+    )
+
+    const { stop: stopStream } = usePoseFrameStream(activeFrames, (pose) => {
+        // Only publish to MQTT for direct gesture presets (like Wave/Cheer), NOT during locomotion!
+        if (executingName && !["walk_forward", "walk_backward", "turn_left", "turn_right", "spin"].includes(executingName)) {
+            publishLivePose(pose)
+        }
+    })
+
+    const playPreset = useCallback(
+        (presetName) => {
+            if (!presetName) return
+            stopStream()
+            setExecutingName(presetName)
+            const reqId = ++activeReqIdRef.current
+            const dims = (params && params.dimensions) || DEFAULT_DIMENSIONS
+            const startPose = (params && params.pose) || DEFAULT_POSE
+
+            generatePresetFramesAsync(presetName, dims, 3, startPose, 30).then((frames) => {
+                if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
+                    setActiveFrames(frames)
+                }
+            })
+        },
+        [params, stopStream]
+    )
+
+    const playLocomotion = useCallback(
+        (actionId, durationMs = 3000) => {
+            stopStream()
+            setExecutingName(actionId)
+            const reqId = ++activeReqIdRef.current
+            const dims = (params && params.dimensions) || DEFAULT_DIMENSIONS
+            const startPose = (params && params.pose) || DEFAULT_POSE
+
+            generateLocomotionFrames(actionId, dims, durationMs, startPose).then((frames) => {
+                if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
+                    setActiveFrames(frames)
+                }
+            })
+        },
+        [params, stopStream]
+    )
+
+    const handleVoiceCommand = useCallback(
+        (commandText, fullUtterance) => {
+            const entry = {
+                id: Date.now(),
+                time: new Date().toLocaleTimeString(),
+                full: fullUtterance,
+                command: commandText,
+            }
+            setActionLog((prev) => [entry, ...prev.slice(0, 20)])
+
+            // Match against local action table
+            const matchedAction = matchAction(commandText, ACTIONS)
+
+            if (matchedAction) {
+                const { payload, topic, reply, name, id, duration_ms } = matchedAction
+                speakFeedback(reply || `Executing ${name}`)
+
+                if (topic === "audio") {
+                    publishAudio(payload)
+                } else if (payload && payload.type === "preset") {
+                    playPreset(payload.preset)
+                } else if (payload && payload.type === "motion") {
+                    publishImmediate("hexapod/cmd", payload)
+                    if (id === "stop") {
+                        stopStream()
+                        setExecutingName(null)
+                        onUpdate("pose", { pose: DEFAULT_POSE })
+                    } else {
+                        playLocomotion(id, duration_ms || 3000)
+                    }
+                } else {
+                    publishImmediate("hexapod/cmd", payload)
+                }
+            } else if (aiOnline) {
+                // Forward directive to Pi-Hub LLM
+                publishAi({
+                    type: "text",
+                    role: "user",
+                    content: commandText,
+                })
+                speakFeedback("Processing directive.")
+            } else {
+                speakFeedback("Command not recognized.")
+            }
+        },
+        [aiOnline, playPreset, playLocomotion, publishAi, publishAudio, publishImmediate, stopStream, onUpdate]
+    )
+
+    const { isListening, wakeWordState, lastTranscript, lastAcceptedCommand, micError } =
+        useContinuousWakeWord({
+            onCommand: handleVoiceCommand,
+            minConfidence: 0.45,
+            enabled: true,
+        })
+
+    useEffect(() => {
+        onMount(SECTION_NAMES.judgement || "Judgement")
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
+
+    return (
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px", width: "100%" }}>
+            {/* Top: Balanced Side-by-Side Viewport */}
+            <div style={{ height: "460px", width: "100%" }}>
+                <DualStageViewport
+                    camConfig={camConfig}
+                    camTelemetry={camTelemetry}
+                    isConnected={isConnected}
+                    hexapod={hexapod}
+                    revision={revision}
+                />
+            </div>
+
+            {/* Bottom: 24/7 Voice & Judgement Status HUD */}
+            <div className="border" style={{ padding: "12px", backgroundColor: "rgba(15, 23, 42, 0.75)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                    <h3 style={{ margin: 0, color: "var(--c1-green)", fontSize: "0.95rem" }}>
+                        24/7 PASSIVE WAKE-WORD SENTINEL
+                    </h3>
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                        <span style={stateBadgeStyle(wakeWordState, isListening)}>
+                            <span style={pulseDotStyle(isListening)} />
+                            {getStatusLabel(wakeWordState, isListening)}
+                        </span>
+                    </div>
+                </div>
+
+                {micError && (
+                    <div style={{ color: "var(--c6-red)", fontSize: "0.75rem", marginBottom: "8px" }}>
+                        ⚠️ {micError}
+                    </div>
+                )}
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", fontSize: "0.72rem" }}>
+                    {/* Live Audio & Transcript Monitor */}
+                    <div style={panelBoxStyle}>
+                        <div style={{ color: "#94a3b8", fontWeight: "bold", marginBottom: "4px" }}>
+                            AUDIO STREAM ANALYSIS:
+                        </div>
+                        <div style={{ marginBottom: "4px" }}>
+                            <strong>Heard Raw:</strong>{" "}
+                            <span style={{ color: "#cbd5e1" }}>{lastTranscript || "(Waiting for speech...)"}</span>
+                        </div>
+                        <div>
+                            <strong>Active Command:</strong>{" "}
+                            <span style={{ color: "var(--c1-green)", fontWeight: "bold" }}>
+                                {lastAcceptedCommand || "None (Filter Active)"}
+                            </span>
+                        </div>
+                    </div>
+
+                    {/* Filter Status Guide */}
+                    <div style={panelBoxStyle}>
+                        <div style={{ color: "#94a3b8", fontWeight: "bold", marginBottom: "4px" }}>
+                            GATE CRITERIA:
+                        </div>
+                        <div style={{ color: "#94a3b8" }}>
+                            • Responds <strong>ONLY</strong> to <code>"Hey Spider &lt;action&gt;"</code> or <code>"Hey Hexapod &lt;action&gt;"</code>.
+                            <br />
+                            • Ambient speech, mumbling, and unrelated background sounds are automatically dropped.
+                        </div>
+                    </div>
+                </div>
+
+                {/* Directive Execution Log */}
+                {actionLog.length > 0 && (
+                    <div style={{ marginTop: "10px" }}>
+                        <div style={{ fontSize: "0.7rem", color: "#94a3b8", fontWeight: "bold", marginBottom: "4px" }}>
+                            DIRECTIVE HISTORY:
+                        </div>
+                        <div style={historyBoxStyle}>
+                            {actionLog.map((item) => (
+                                <div key={item.id} style={{ display: "flex", justifyContent: "space-between", gap: "10px" }}>
+                                    <span style={{ color: "var(--c4-blue)" }}>[{item.time}]</span>
+                                    <span style={{ flex: 1, color: "var(--c1-green)" }}>{item.command}</span>
+                                    <span style={{ color: "#64748b", fontSize: "0.65rem" }}>"{item.full}"</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}
+
+const getStatusLabel = (state, isListening) => {
+    if (!isListening) return "MIC OFFLINE"
+    if (state === "recognized") return "WAKE WORD TRIGGERED"
+    if (state === "listening_prompt") return "HEARD WAKE WORD — AWAITING DIRECTIVE"
+    if (state === "ignored") return "AMBIENT CHATTER DROPPED"
+    return "24/7 LISTENING ('Hey Spider...')"
+}
+
+const stateBadgeStyle = (state, isListening) => {
+    let bg = "rgba(50, 255, 126, 0.15)"
+    let border = "var(--c1-green)"
+    let color = "var(--c1-green)"
+
+    if (!isListening) {
+        bg = "rgba(255, 33, 33, 0.15)"
+        border = "var(--c6-red)"
+        color = "var(--c6-red)"
+    } else if (state === "recognized") {
+        bg = "rgba(252, 66, 123, 0.25)"
+        border = "var(--c2-pink)"
+        color = "var(--c2-pink)"
+    } else if (state === "ignored") {
+        bg = "rgba(100, 116, 139, 0.2)"
+        border = "#64748b"
+        color = "#94a3b8"
+    }
+
+    return {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        padding: "3px 10px",
+        borderRadius: "12px",
+        backgroundColor: bg,
+        border: `1px solid ${border}`,
+        color: color,
+        fontSize: "0.68rem",
+        fontWeight: "bold",
+    }
+}
+
+const pulseDotStyle = (active) => ({
+    width: 6,
+    height: 6,
+    borderRadius: "50%",
+    backgroundColor: active ? "var(--c1-green)" : "var(--c6-red)",
+    display: "inline-block",
+})
+
+const panelBoxStyle = {
+    padding: "8px",
+    borderRadius: "6px",
+    backgroundColor: "rgba(10, 15, 25, 0.7)",
+    border: "1px solid rgba(41, 128, 185, 0.3)",
+}
+
+const historyBoxStyle = {
+    maxHeight: "90px",
+    overflowY: "auto",
+    padding: "6px",
+    borderRadius: "4px",
+    backgroundColor: "rgba(0, 0, 0, 0.4)",
+    fontSize: "0.68rem",
+    fontFamily: "monospace",
+}
+
+export default JudgementPanel
 
 ================================================================================
 # FILE: src\components\pages\LandingPage.js
@@ -3816,6 +4336,8 @@ import SensorPanel from "./SensorPanel"
 import AudioPanel from "./AudioPanel"
 import AIPanel from "./AIPanel"
 import PresetsPage from "./PresetsPage"
+import JudgementPanel from "./JudgementPanel"
+
 
 export {
     ForwardKinematicsPage,
@@ -3828,15 +4350,17 @@ export {
     AudioPanel,
     AIPanel,
     PresetsPage,
+    JudgementPanel, 
 }
 
 ================================================================================
 # FILE: src\components\vars.js
 ================================================================================
 
+// web-ui/src/components/vars.js
 import React from "react"
 import { GiCoffeeMug } from "react-icons/gi"
-import { FaGithubAlt, FaTimes, FaHome, FaCamera, FaMicrochip, FaVolumeUp, FaRobot } from "react-icons/fa"
+import { FaGithubAlt, FaTimes, FaHome, FaCamera, FaMicrochip, FaVolumeUp, FaRobot, FaBalanceScale } from "react-icons/fa"
 import { GrStatusGoodSmall } from "react-icons/gr"
 
 const SECTION_NAMES = {
@@ -3851,6 +4375,7 @@ const SECTION_NAMES = {
     audio: "Audio",
     ai: "AI Assistant",
     presets: "Presets",
+    judgement: "Judgement",
 }
 
 const PATH_NAMES = {
@@ -3864,6 +4389,7 @@ const PATH_NAMES = {
     audio: "/audio",
     ai: "/ai",
     presets: "/presets",
+    judgement: "/judgement",
 }
 
 const ANGLE_NAMES = ["alpha", "beta", "gamma"]
@@ -3935,6 +4461,7 @@ const GAIT_RANGE_PARAMS = {
     liftSwing: { minVal: 10, maxVal: 70, stepVal: 1, defaultVal: 40 },
     stepCount: { minVal: 3, maxVal: 7, stepVal: 1, defaultVal: 5 },
 }
+
 /*************
  * ICONS
  *************/
@@ -3949,6 +4476,7 @@ const ICON_COMPONENTS = {
     microchip: <FaMicrochip className="vertical-align" />,
     volume: <FaVolumeUp className="vertical-align" />,
     robot: <FaRobot className="vertical-align" />,
+    judgement: <FaBalanceScale className="vertical-align" />,
 }
 
 /*************
@@ -3976,7 +4504,6 @@ const PATHS = {
         description: SECTION_NAMES.landingPage,
         icon: ICON_COMPONENTS.home,
     },
-
     walkingGaits: {
         path: PATH_NAMES.walkingGaits,
         description: SECTION_NAMES.walkingGaits,
@@ -3986,31 +4513,37 @@ const PATHS = {
         path: PATH_NAMES.camera,
         description: SECTION_NAMES.camera,
         icon: ICON_COMPONENTS.camera,
-        hidden: true, // P2: MJPEG stream + web feed
+        hidden: true,
     },
     sensors: {
         path: PATH_NAMES.sensors,
         description: SECTION_NAMES.sensors,
         icon: ICON_COMPONENTS.microchip,
-        hidden: true, // P4: ultrasonic proximity
+        hidden: true,
     },
     audio: {
         path: PATH_NAMES.audio,
         description: SECTION_NAMES.audio,
         icon: ICON_COMPONENTS.volume,
-        hidden: true, // P3: MAX98357 speaker
+        hidden: true,
     },
     ai: {
         path: PATH_NAMES.ai,
         description: SECTION_NAMES.ai,
         icon: ICON_COMPONENTS.robot,
-        hidden: false, // P5: STT → LLM → MQTT → TTS (unveiled 2026-08-16)
+        hidden: false,
     },
     presets: {
         path: PATH_NAMES.presets,
         description: SECTION_NAMES.presets,
         icon: ICON_COMPONENTS.circle,
-        hidden: false, // Chunk 2: keyframe presets (motionSynthesizer) — unveiled 2026-08-18
+        hidden: false,
+    },
+    judgement: {
+        path: PATH_NAMES.judgement,
+        description: SECTION_NAMES.judgement,
+        icon: ICON_COMPONENTS.judgement,
+        hidden: false,
     },
 }
 
@@ -4033,22 +4566,18 @@ const PATH_LINKS = [
     PATHS.forwardKinematics,
     PATHS.legPatterns,
     PATHS.walkingGaits,
+    PATHS.ai,
+    PATHS.presets,
+    PATHS.judgement,
     PATHS.camera,
     PATHS.sensors,
     PATHS.audio,
-    PATHS.ai,
-    PATHS.presets,
     PATHS.landingPage,
 ].filter(l => !l.hidden)
 
 const URL_LINKS = [KOFI_LINK_PROPERTIES, REPO_LINK_PROPERTIES]
 
-/*************
- * LANDING PAGE
- *************/
-
 const LANDING_PAGE_MESSAGE = `
-
 # Mithi's Bare Minimum Hexapod Robot Simulator
 
 Enjoy your stay and share with your friends!
@@ -7664,6 +8193,146 @@ const fillArray = (value, len) => {
 }
 
 export default getWalkSequence
+
+================================================================================
+# FILE: src\hooks\useContinuousWakeWord.js
+================================================================================
+
+// web-ui/src/hooks/useContinuousWakeWord.js
+import { useState, useEffect, useRef, useCallback } from "react"
+
+// Strict wake-word regex: matches "hey spider <command>" or "hey hexapod <command>"
+const WAKE_WORD_REGEX = /^(?:hey|ok|okay|hi)\s+(?:spider|hexapod)\b[\s,.:;]*(.+)$/i
+
+// Standalone wake word (e.g. user just said "hey spider" without trailing command)
+const STANDALONE_WAKE_REGEX = /^(?:hey|ok|okay|hi)\s+(?:spider|hexapod)[\s,.:;?!]*$/i
+
+export const useContinuousWakeWord = ({
+    onCommand = () => {},
+    minConfidence = 0.45,
+    enabled = true,
+}) => {
+    const [isListening, setIsListening] = useState(false)
+    const [wakeWordState, setWakeWordState] = useState("idle") // "idle" | "listening_prompt" | "recognized" | "ignored"
+    const [lastTranscript, setLastTranscript] = useState("")
+    const [lastAcceptedCommand, setLastAcceptedCommand] = useState("")
+    const [micError, setMicError] = useState(null)
+
+    const recognitionRef = useRef(null)
+    const isMountedRef = useRef(true)
+    const onCommandRef = useRef(onCommand)
+    onCommandRef.current = onCommand
+
+    const processUtterance = useCallback((rawTranscript, confidence) => {
+        const trimmed = rawTranscript.trim()
+        setLastTranscript(trimmed)
+
+        // 1. Mumble & Confidence filter: Discard low-confidence or overly brief artifacts
+        if (confidence > 0 && confidence < minConfidence) {
+            setWakeWordState("ignored")
+            return
+        }
+
+        // 2. Standalone wake word greeting ("Hey Spider")
+        if (STANDALONE_WAKE_REGEX.test(trimmed)) {
+            setWakeWordState("listening_prompt")
+            return
+        }
+
+        // 3. Strict Wake Word + Directive sentence ("Hey Spider, walk forward")
+        const match = trimmed.match(WAKE_WORD_REGEX)
+        if (match && match[1]) {
+            const extractedCommand = match[1].trim()
+            // Ensure the command is not just mumbling or single meaningless characters
+            if (extractedCommand.length >= 2) {
+                setWakeWordState("recognized")
+                setLastAcceptedCommand(extractedCommand)
+                onCommandRef.current(extractedCommand, trimmed)
+                return
+            }
+        }
+
+        // 4. Background chatter or speech not addressed to the hexapod
+        setWakeWordState("ignored")
+    }, [minConfidence])
+
+    useEffect(() => {
+        isMountedRef.current = true
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+
+        if (!SpeechRecognition) {
+            setMicError("Speech recognition is not supported in this browser. Please use Chrome or Edge.")
+            return undefined
+        }
+
+        const recognition = new SpeechRecognition()
+        recognition.continuous = true
+        recognition.interimResults = false
+        recognition.lang = "en-US"
+        recognition.maxAlternatives = 1
+        recognitionRef.current = recognition
+
+        recognition.onstart = () => {
+            if (isMountedRef.current) {
+                setIsListening(true)
+                setMicError(null)
+            }
+        }
+
+        recognition.onresult = (event) => {
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                if (event.results[i].isFinal) {
+                    const transcript = event.results[i][0].transcript
+                    const confidence = event.results[i][0].confidence || 1.0
+                    processUtterance(transcript, confidence)
+                }
+            }
+        }
+
+        recognition.onerror = (event) => {
+            if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+                setMicError("Microphone permission denied. Enable microphone access to use 24/7 voice.")
+                setIsListening(false)
+            }
+        }
+
+        // Resilient auto-restart loop for 24/7 continuous listening
+        recognition.onend = () => {
+            if (isMountedRef.current && enabled) {
+                try {
+                    recognition.start()
+                } catch (e) {
+                    // Ignore restart race errors
+                }
+            } else if (isMountedRef.current) {
+                setIsListening(false)
+            }
+        }
+
+        if (enabled) {
+            try {
+                recognition.start()
+            } catch (e) {
+                console.warn("[WakeWord] Error starting recognition:", e)
+            }
+        }
+
+        return () => {
+            isMountedRef.current = false
+            try {
+                recognition.stop()
+            } catch (e) {}
+        }
+    }, [enabled, processUtterance])
+
+    return {
+        isListening,
+        wakeWordState,
+        lastTranscript,
+        lastAcceptedCommand,
+        micError,
+    }
+}
 
 ================================================================================
 # FILE: src\hooks\useMqtt.js

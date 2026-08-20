@@ -57,15 +57,12 @@ const AIPanel = ({
         [publishImmediate]
     )
 
-    const { stop: stopStream } = usePoseFrameStream(activeFrames, publishLivePose, {
-        onComplete: finalPose => {
-            if (finalPose && typeof finalPose === "object") {
-                onUpdate("pose", { pose: finalPose })
-            }
-            setActiveExecutingAction(null)
-            setActiveFrames([])
+    const { stop: stopStream } = usePoseFrameStream(activeFrames, (pose) => {
+        // Only publish to MQTT for direct gesture presets (like Wave/Cheer), NOT during locomotion!
+        if (activeExecutingAction && !["walk_forward", "walk_backward", "turn_left", "turn_right", "spin"].includes(activeExecutingAction)) {
+            publishLivePose(pose);
         }
-    })
+    });
 
     const playPreset = useCallback(
         presetName => {

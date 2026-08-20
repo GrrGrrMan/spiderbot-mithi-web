@@ -1,4 +1,3 @@
-// web-ui/src/components/pages/JudgementPanel.js
 import React, { useState, useEffect, useCallback, useRef } from "react"
 import { SECTION_NAMES } from "../vars"
 import { useContinuousWakeWord } from "../../hooks/useContinuousWakeWord"
@@ -54,14 +53,11 @@ const JudgementPanel = ({
         [publishImmediate]
     )
 
-    const { stop: stopStream } = usePoseFrameStream(activeFrames, publishLivePose, {
-        onComplete: (finalPose) => {
-            if (finalPose && typeof finalPose === "object") {
-                onUpdate("pose", { pose: finalPose })
-            }
-            setExecutingName(null)
-            setActiveFrames([])
-        },
+    const { stop: stopStream } = usePoseFrameStream(activeFrames, (pose) => {
+        // Only publish to MQTT for direct gesture presets (like Wave/Cheer), NOT during locomotion!
+        if (executingName && !["walk_forward", "walk_backward", "turn_left", "turn_right", "spin"].includes(executingName)) {
+            publishLivePose(pose)
+        }
     })
 
     const playPreset = useCallback(

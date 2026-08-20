@@ -64,10 +64,9 @@ class WalkingGaitsPage extends Component {
             step_height: gaitParams.liftSwing,
             leg_stance: gaitParams.legStance,
             hip_stance: gaitParams.hipStance,
-            // Include body posture shift & tilt offsets while walking
-            pos_x: gaitParams.tx * 0,
+            pos_x: 0,
             pos_y: -gaitParams.tx * 100.0,
-            pos_z: gaitParams.tz * 100.0,
+            pos_z: gaitParams.tz * 132.0,
             roll: gaitParams.rx,
             pitch: gaitParams.ry
         })
