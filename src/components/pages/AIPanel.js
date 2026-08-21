@@ -57,12 +57,19 @@ const AIPanel = ({
         [publishImmediate]
     )
 
-    const { stop: stopStream } = usePoseFrameStream(activeFrames, (pose) => {
-        // Only publish to MQTT for direct gesture presets (like Wave/Cheer), NOT during locomotion!
-        if (activeExecutingAction && !["walk_forward", "walk_backward", "turn_left", "turn_right", "spin"].includes(activeExecutingAction)) {
-            publishLivePose(pose);
+    const { stop: stopStream } = usePoseFrameStream(
+        activeFrames, 
+        (pose) => {
+            if (activeExecutingAction && !["walk_forward", "walk_backward", "turn_left", "turn_right", "spin"].includes(activeExecutingAction)) {
+                publishLivePose(pose);
+            }
+        },
+        {
+            onComplete: (finalPose) => {
+                setActiveExecutingAction(null);
+            }
         }
-    });
+    );
 
     const playPreset = useCallback(
         presetName => {
@@ -148,14 +155,15 @@ const AIPanel = ({
 
     const executeAction = useCallback(action => {
         const { payload, topic, duration_ms, reply, name, id } = action
-        setActiveExecutingAction(name)
 
         if (topic === "audio") {
+            // Audio is fire-and-forget; do NOT touch activeExecutingAction so running motion streams continue
             publishAudio(payload)
-            setActiveExecutingAction(null)
         } else if (payload && payload.type === "preset") {
+            setActiveExecutingAction(name)
             playPreset(payload.preset)
         } else if (payload && payload.type === "motion") {
+            setActiveExecutingAction(name)
             publishImmediate("hexapod/cmd", payload)
             if (id === "stop") {
                 stopStream()
@@ -170,8 +178,8 @@ const AIPanel = ({
                 }
             }
         } else {
+            setActiveExecutingAction(name)
             publishImmediate("hexapod/cmd", payload)
-            setActiveExecutingAction(null)
         }
         push("assistant", reply || `Triggered action: ${name}`)
     }, [publishAudio, publishImmediate, push, playPreset, playLocomotion, stopStream, onUpdate])

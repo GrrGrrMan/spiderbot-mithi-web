@@ -43,9 +43,18 @@ class InverseKinematicsPage extends Component {
             this.updateHexapodPlot(result.hexapod, ikParams)
 
             // Stream the exact 18 solved joint angles directly to the hardware
-            if (this.props.publishThrottled && result.hexapod && result.hexapod.pose) {
-                const batchPayload = buildServoBatchPayload(result.hexapod.pose)
-                this.props.publishThrottled("hexapod/cmd", batchPayload)
+            if (this.props.publishThrottled) {
+                this.props.publishThrottled("hexapod/cmd", {
+                    type: "motion",
+                    pos_x: ikParams.ty * 100.0,  // Web +Y translation -> FW +X
+                    pos_y: -ikParams.tx * 100.0, // Web +X translation -> FW -Y
+                    pos_z: ikParams.tz * 100.0,  // Height offset
+                    roll: ikParams.ry,   // Web UI Y-rotation is body Roll
+                    pitch: ikParams.rx,  // Web UI X-rotation is body Pitch
+                    yaw: ikParams.rz,
+                    leg_stance: ikParams.legStance,
+                    hip_stance: ikParams.hipStance
+                })
             }
         }
     get sliders() {

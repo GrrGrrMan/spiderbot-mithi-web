@@ -17,8 +17,8 @@ const getPose = (sequences, i) => {
     }, {})
 }
 
-const newSwitch = (id, value, handleChange) => (
-    <ToggleSwitch id={id} handleChange={handleChange} value={value} showValue={true} />
+const newSwitch = (id, value, checked, handleChange) => (
+    <ToggleSwitch id={id} handleChange={handleChange} value={value} checked={checked} showValue={true} />
 )
 
 const switches = (switch1, switch2, switch3) => (
@@ -140,13 +140,24 @@ class WalkingGaitsPage extends Component {
     reset = () => {
         const { isTripodGait, inWalkMode } = this.state
 
-        // 1. Reset animation counter and parameter state
-        this.setState({ gaitParams: DEFAULT_GAIT_PARAMS, animationCount: 0 })
+        // 1. Halt the active Web UI animation loop & clear interval timer
+        if (this.intervalID) {
+            clearInterval(this.intervalID)
+            this.intervalID = null
+        }
 
-        // 2. Re-compute gait sequence and update 3D Plotly visualizer
+        // 2. Reset all parameters and mark animation as stopped
+        this.currentTwist = 0
+        this.setState({
+            gaitParams: DEFAULT_GAIT_PARAMS,
+            animationCount: 0,
+            isAnimating: false,
+        })
+
+        // 3. Re-compute stationary neutral stance and render neutral pose
         this.setWalkSequence(DEFAULT_GAIT_PARAMS, isTripodGait, inWalkMode)
 
-        // 3. Publish reset command to physical robot
+        // 4. Send explicit halt command to physical robot
         if (this.props.publishThrottled) {
             this.props.publishThrottled("hexapod/cmd", DEFAULT_MOTION_COMMAND)
         }
@@ -198,27 +209,27 @@ class WalkingGaitsPage extends Component {
 
     get widgetsSwitch() {
         const value = this.state.showGaitWidgets ? "controlsShown" : "poseShown"
-        return newSwitch("widgetSw", value, this.toggleWidgets)
+        return newSwitch("widgetSw", value, this.state.showGaitWidgets, this.toggleWidgets)
     }
 
     get animatingSwitch() {
         const value = this.state.isAnimating ? "PLAYING..." : "...PAUSED. "
-        return newSwitch("animatingSw", value, this.toggleAnimating)
+        return newSwitch("animatingSw", value, this.state.isAnimating, this.toggleAnimating)
     }
 
     get gaitTypeSwitch() {
         const value = this.state.isTripodGait ? "tripodGait" : "rippleGait"
-        return newSwitch("gaitSw", value, this.toggleGaitType)
+        return newSwitch("gaitSw", value, this.state.isTripodGait, this.toggleGaitType)
     }
 
     get directionSwitch() {
         const value = this.state.isForward ? "isForward" : "isBackward"
-        return newSwitch("directionSw", value, this.toggleDirection)
+        return newSwitch("directionSw", value, this.state.isForward, this.toggleDirection)
     }
 
     get rotateSwitch() {
         const value = this.state.inWalkMode ? "isWalk" : "isRotate"
-        return newSwitch("rotateSw", value, this.toggleWalkMode)
+        return newSwitch("rotateSw", value, this.state.inWalkMode, this.toggleWalkMode)
     }
 
     get sliders() {
