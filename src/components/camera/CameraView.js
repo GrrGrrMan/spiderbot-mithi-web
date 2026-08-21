@@ -39,6 +39,11 @@ export const resolveMjpegUrl = (config, telemetry, searchParams) => {
         return `http://${telemetry.ip}:${CAM_STREAM_PORT}/stream`
     }
 
+    // Direct hotspot fallback if connected via Spiderlink AP
+    if (telemetry && telemetry.hotspot) {
+        return `http://192.168.4.1:${CAM_STREAM_PORT}/stream`
+    }
+
     return null
 }
 

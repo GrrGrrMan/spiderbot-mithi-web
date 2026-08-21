@@ -966,6 +966,11 @@ export const resolveMjpegUrl = (config, telemetry, searchParams) => {
         return `http://${telemetry.ip}:${CAM_STREAM_PORT}/stream`
     }
 
+    // Direct hotspot fallback if connected via Spiderlink AP
+    if (telemetry && telemetry.hotspot) {
+        return `http://192.168.4.1:${CAM_STREAM_PORT}/stream`
+    }
+
     return null
 }
 
@@ -2354,12 +2359,19 @@ const AlertBox = ({ info }) => (
 )
 
 const ToggleSwitch = ({ id, value, handleChange, showValue, checked }) => {
-    // Use explicit `checked` prop if passed; otherwise check if `value` is boolean
-    const isChecked = checked !== undefined ? Boolean(checked) : (typeof value === "boolean" ? value : false)
+    // Determine checked state from explicit prop, boolean value, or truthy string matching
+    let isChecked = false
+    if (checked !== undefined) {
+        isChecked = Boolean(checked)
+    } else if (typeof value === "boolean") {
+        isChecked = value
+    } else if (typeof value === "string") {
+        isChecked = ["true", "1", "1x", "slide", "playing...", "controlsShown", "tripodGait", "isForward", "isWalk"].includes(value.toLowerCase().trim())
+    }
 
     return (
         <div className="switch-container">
-            <label className="switch">
+            <label className="switch" htmlFor={id}>
                 <input 
                     id={id} 
                     type="checkbox" 
@@ -2369,7 +2381,7 @@ const ToggleSwitch = ({ id, value, handleChange, showValue, checked }) => {
                 <span className="toggle-switch-widget round"></span>
                 <span style={{ opacity: 0 }}>{String(value)}</span>
             </label>
-            <label className="label">{showValue ? String(value) : null}</label>
+            <label className="label" htmlFor={id}>{showValue ? String(value) : null}</label>
         </div>
     )
 }
@@ -2632,12 +2644,19 @@ const AIPanel = ({
         [publishImmediate]
     )
 
-    const { stop: stopStream } = usePoseFrameStream(activeFrames, (pose) => {
-        // Only publish to MQTT for direct gesture presets (like Wave/Cheer), NOT during locomotion!
-        if (activeExecutingAction && !["walk_forward", "walk_backward", "turn_left", "turn_right", "spin"].includes(activeExecutingAction)) {
-            publishLivePose(pose);
+    const { stop: stopStream } = usePoseFrameStream(
+        activeFrames, 
+        (pose) => {
+            if (activeExecutingAction && !["walk_forward", "walk_backward", "turn_left", "turn_right", "spin"].includes(activeExecutingAction)) {
+                publishLivePose(pose);
+            }
+        },
+        {
+            onComplete: (finalPose) => {
+                setActiveExecutingAction(null);
+            }
         }
-    });
+    );
 
     const playPreset = useCallback(
         presetName => {
@@ -2723,14 +2742,15 @@ const AIPanel = ({
 
     const executeAction = useCallback(action => {
         const { payload, topic, duration_ms, reply, name, id } = action
-        setActiveExecutingAction(name)
 
         if (topic === "audio") {
+            // Audio is fire-and-forget; do NOT touch activeExecutingAction so running motion streams continue
             publishAudio(payload)
-            setActiveExecutingAction(null)
         } else if (payload && payload.type === "preset") {
+            setActiveExecutingAction(name)
             playPreset(payload.preset)
         } else if (payload && payload.type === "motion") {
+            setActiveExecutingAction(name)
             publishImmediate("hexapod/cmd", payload)
             if (id === "stop") {
                 stopStream()
@@ -2745,8 +2765,8 @@ const AIPanel = ({
                 }
             }
         } else {
+            setActiveExecutingAction(name)
             publishImmediate("hexapod/cmd", payload)
-            setActiveExecutingAction(null)
         }
         push("assistant", reply || `Triggered action: ${name}`)
     }, [publishAudio, publishImmediate, push, playPreset, playLocomotion, stopStream, onUpdate])
@@ -3379,31 +3399,32 @@ class InverseKinematicsPage extends Component {
     }
 
     updateIkParams = (name, value) => {
-        const ikParams = { ...this.state.ikParams, [name]: value }
-        const result = solveInverseKinematics(this.props.params.dimensions, ikParams)
+            const ikParams = { ...this.state.ikParams, [name]: value }
+            const result = solveInverseKinematics(this.props.params.dimensions, ikParams)
 
-        if (!result.obtainedSolution) {
-            this.props.onUpdate("hexapod", { hexapod: null })
-            this.setState({ errorMessage: result.message })
-            return
+            if (!result.obtainedSolution) {
+                this.props.onUpdate("hexapod", { hexapod: null })
+                this.setState({ errorMessage: result.message })
+                return
+            }
+
+            this.updateHexapodPlot(result.hexapod, ikParams)
+
+            // Stream the exact 18 solved joint angles directly to the hardware
+            if (this.props.publishThrottled) {
+                this.props.publishThrottled("hexapod/cmd", {
+                    type: "motion",
+                    pos_x: ikParams.ty * 100.0,  // Web +Y translation -> FW +X
+                    pos_y: -ikParams.tx * 100.0, // Web +X translation -> FW -Y
+                    pos_z: ikParams.tz * 100.0,  // Height offset
+                    roll: ikParams.ry,   // Web UI Y-rotation is body Roll
+                    pitch: ikParams.rx,  // Web UI X-rotation is body Pitch
+                    yaw: ikParams.rz,
+                    leg_stance: ikParams.legStance,
+                    hip_stance: ikParams.hipStance
+                })
+            }
         }
-
-        this.updateHexapodPlot(result.hexapod, ikParams)
-
-        if (this.props.publishThrottled) {
-            this.props.publishThrottled("hexapod/cmd", {
-                type: "motion",
-                pos_x: ikParams.ty * 100.0,  // Web +Y translation -> FW +X
-                pos_y: -ikParams.tx * 100.0, // Web +X translation -> FW -Y
-                pos_z: ikParams.tz * 100.0,  // Height offset
-                roll: ikParams.ry,   // Web UI Y-rotation is body Roll
-                pitch: ikParams.rx,  // Web UI X-rotation is body Pitch
-                yaw: ikParams.rz,
-                leg_stance: ikParams.legStance,
-                hip_stance: ikParams.hipStance
-            })
-        }
-    }
     get sliders() {
         return sliderList({
             names: IK_SLIDERS_LABELS,
@@ -4063,8 +4084,8 @@ const getPose = (sequences, i) => {
     }, {})
 }
 
-const newSwitch = (id, value, handleChange) => (
-    <ToggleSwitch id={id} handleChange={handleChange} value={value} showValue={true} />
+const newSwitch = (id, value, checked, handleChange) => (
+    <ToggleSwitch id={id} handleChange={handleChange} value={value} checked={checked} showValue={true} />
 )
 
 const switches = (switch1, switch2, switch3) => (
@@ -4110,10 +4131,9 @@ class WalkingGaitsPage extends Component {
             step_height: gaitParams.liftSwing,
             leg_stance: gaitParams.legStance,
             hip_stance: gaitParams.hipStance,
-            // Include body posture shift & tilt offsets while walking
-            pos_x: gaitParams.tx * 0,
+            pos_x: 0,
             pos_y: -gaitParams.tx * 100.0,
-            pos_z: gaitParams.tz * 100.0,
+            pos_z: gaitParams.tz * 132.0,
             roll: gaitParams.rx,
             pitch: gaitParams.ry
         })
@@ -4187,13 +4207,24 @@ class WalkingGaitsPage extends Component {
     reset = () => {
         const { isTripodGait, inWalkMode } = this.state
 
-        // 1. Reset animation counter and parameter state
-        this.setState({ gaitParams: DEFAULT_GAIT_PARAMS, animationCount: 0 })
+        // 1. Halt the active Web UI animation loop & clear interval timer
+        if (this.intervalID) {
+            clearInterval(this.intervalID)
+            this.intervalID = null
+        }
 
-        // 2. Re-compute gait sequence and update 3D Plotly visualizer
+        // 2. Reset all parameters and mark animation as stopped
+        this.currentTwist = 0
+        this.setState({
+            gaitParams: DEFAULT_GAIT_PARAMS,
+            animationCount: 0,
+            isAnimating: false,
+        })
+
+        // 3. Re-compute stationary neutral stance and render neutral pose
         this.setWalkSequence(DEFAULT_GAIT_PARAMS, isTripodGait, inWalkMode)
 
-        // 3. Publish reset command to physical robot
+        // 4. Send explicit halt command to physical robot
         if (this.props.publishThrottled) {
             this.props.publishThrottled("hexapod/cmd", DEFAULT_MOTION_COMMAND)
         }
@@ -4245,27 +4276,27 @@ class WalkingGaitsPage extends Component {
 
     get widgetsSwitch() {
         const value = this.state.showGaitWidgets ? "controlsShown" : "poseShown"
-        return newSwitch("widgetSw", value, this.toggleWidgets)
+        return newSwitch("widgetSw", value, this.state.showGaitWidgets, this.toggleWidgets)
     }
 
     get animatingSwitch() {
         const value = this.state.isAnimating ? "PLAYING..." : "...PAUSED. "
-        return newSwitch("animatingSw", value, this.toggleAnimating)
+        return newSwitch("animatingSw", value, this.state.isAnimating, this.toggleAnimating)
     }
 
     get gaitTypeSwitch() {
         const value = this.state.isTripodGait ? "tripodGait" : "rippleGait"
-        return newSwitch("gaitSw", value, this.toggleGaitType)
+        return newSwitch("gaitSw", value, this.state.isTripodGait, this.toggleGaitType)
     }
 
     get directionSwitch() {
         const value = this.state.isForward ? "isForward" : "isBackward"
-        return newSwitch("directionSw", value, this.toggleDirection)
+        return newSwitch("directionSw", value, this.state.isForward, this.toggleDirection)
     }
 
     get rotateSwitch() {
         const value = this.state.inWalkMode ? "isWalk" : "isRotate"
-        return newSwitch("rotateSw", value, this.toggleWalkMode)
+        return newSwitch("rotateSw", value, this.state.inWalkMode, this.toggleWalkMode)
     }
 
     get sliders() {

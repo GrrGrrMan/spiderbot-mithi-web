@@ -11,12 +11,19 @@ const AlertBox = ({ info }) => (
 )
 
 const ToggleSwitch = ({ id, value, handleChange, showValue, checked }) => {
-    // Use explicit `checked` prop if passed; otherwise check if `value` is boolean
-    const isChecked = checked !== undefined ? Boolean(checked) : (typeof value === "boolean" ? value : false)
+    // Determine checked state from explicit prop, boolean value, or truthy string matching
+    let isChecked = false
+    if (checked !== undefined) {
+        isChecked = Boolean(checked)
+    } else if (typeof value === "boolean") {
+        isChecked = value
+    } else if (typeof value === "string") {
+        isChecked = ["true", "1", "1x", "slide", "playing...", "controlsShown", "tripodGait", "isForward", "isWalk"].includes(value.toLowerCase().trim())
+    }
 
     return (
         <div className="switch-container">
-            <label className="switch">
+            <label className="switch" htmlFor={id}>
                 <input 
                     id={id} 
                     type="checkbox" 
@@ -26,7 +33,7 @@ const ToggleSwitch = ({ id, value, handleChange, showValue, checked }) => {
                 <span className="toggle-switch-widget round"></span>
                 <span style={{ opacity: 0 }}>{String(value)}</span>
             </label>
-            <label className="label">{showValue ? String(value) : null}</label>
+            <label className="label" htmlFor={id}>{showValue ? String(value) : null}</label>
         </div>
     )
 }
