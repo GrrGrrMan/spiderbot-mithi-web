@@ -108,6 +108,15 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
                         setCamTelemetry(parsed)
                     } else {
                         setTelemetry(parsed)
+                        
+                        // Sync audio status from telemetry heartbeat if available
+                        if (parsed.audio) {
+                            setAudioStatus(prev => ({
+                                state: parsed.audio,
+                                action: (prev && prev.action) || "tts"
+                            }))
+                        }
+
                         if (parsed.pose && typeof window !== "undefined") {
                             window.dispatchEvent(
                                 new CustomEvent("hexapod-telemetry-frame", { detail: parsed.pose })

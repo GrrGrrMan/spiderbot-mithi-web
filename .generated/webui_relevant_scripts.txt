@@ -175,6 +175,8 @@ registerProcessor("voice-capture-processor", VoiceCaptureProcessor)
         <link rel="dns-prefetch" href="https://www.google-analytics.com">
         <script defer src="https://www.googletagmanager.com/gtag/js?id=UA-170794768-1"></script>
         <link rel="stylesheet" href="%PUBLIC_URL%/font.min.css" media="print" onload="this.media='all'; this.onload=null;">
+        <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.wasm.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/bundle.min.js"></script>
     </head>
     <body>
         <noscript>You need to enable JavaScript to run this app.</noscript>
@@ -2614,9 +2616,8 @@ const AIPanel = ({
     aiDeviceId = "hexapod-s3-01",
     clearAiMessages = () => {},
     params = {},
-    onUpdate = () => {}
+    onUpdate = () => {},
 }) => {
-    // Ephemeral in-memory chat state: strictly resets on page reload
     const [messages, setMessages] = useState([])
     const [input, setInput] = useState("")
     const [recording, setRecording] = useState(false)
@@ -2628,8 +2629,8 @@ const AIPanel = ({
     const recordingRef = useRef({})
     const lastDirectiveKeyRef = useRef(null)
     const activeReqIdRef = useRef(0)
+    const pendingDirectiveRef = useRef(null)
 
-    // Audio bundling buffer
     const audioChunksRef = useRef([])
     const audioSampleRateRef = useRef(48000)
 
@@ -2645,18 +2646,18 @@ const AIPanel = ({
     )
 
     const { stop: stopStream } = usePoseFrameStream(
-        activeFrames, 
-        (pose) => {
+        activeFrames,
+        pose => {
             if (activeExecutingAction && !["walk_forward", "walk_backward", "turn_left", "turn_right", "spin"].includes(activeExecutingAction)) {
-                publishLivePose(pose);
+                publishLivePose(pose)
             }
         },
         {
-            onComplete: (finalPose) => {
-                setActiveExecutingAction(null);
-            }
+            onComplete: () => {
+                setActiveExecutingAction(null)
+            },
         }
-    );
+    )
 
     const playPreset = useCallback(
         presetName => {
@@ -2666,7 +2667,7 @@ const AIPanel = ({
             const reqId = ++activeReqIdRef.current
             const dims = (params && params.dimensions) || DEFAULT_DIMENSIONS
             const startPose = (params && params.pose) || DEFAULT_POSE
-            
+
             generatePresetFramesAsync(presetName, dims, 3, startPose, 30).then(frames => {
                 if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
                     setActiveFrames(frames)
@@ -2693,6 +2694,78 @@ const AIPanel = ({
         [params, stopStream]
     )
 
+    // Single-Joint Stand Articulation Handler
+    const handleSingleJoint = useCallback(
+        jointParams => {
+            if (!jointParams || !jointParams.leg) return
+            const { leg, joint, angle = 0, mode = "relative" } = jointParams
+            const jointMap = { coxa: "alpha", coxia: "alpha", femur: "beta", tibia: "gamma" }
+            const angleParam = jointMap[joint] || joint
+
+            const currentPose = (params && params.pose) || DEFAULT_POSE
+            const currentAngle = (currentPose[leg] && currentPose[leg][angleParam]) || 0
+
+            let targetAngle = mode === "relative" ? currentAngle + angle : angle
+
+            // Safety boundary clamps for presentation stand
+            if (angleParam === "alpha") targetAngle = Math.max(-40, Math.min(40, targetAngle))
+            if (angleParam === "beta") targetAngle = Math.max(-80, Math.min(80, targetAngle))
+            if (angleParam === "gamma") targetAngle = Math.max(-90, Math.min(90, targetAngle))
+
+            const newPose = {
+                ...currentPose,
+                [leg]: {
+                    ...currentPose[leg],
+                    [angleParam]: targetAngle,
+                },
+            }
+
+            setActiveExecutingAction(`FK: ${leg} ${joint}`)
+            onUpdate("pose", { pose: newPose })
+            publishImmediate("hexapod/cmd", buildServoBatchPayload(newPose))
+        },
+        [params, onUpdate, publishImmediate]
+    )
+
+    const triggerAction = useCallback(
+        (action, jointParams = null) => {
+            if (!action && !jointParams) return
+
+            if (action === "single_joint" || (action && action.id === "single_joint")) {
+                handleSingleJoint(jointParams || (action && action.joint_params))
+                return
+            }
+
+            const { payload, topic, duration_ms, name, id } = action
+
+            if (topic === "audio") {
+                publishAudio(payload)
+            } else if (payload && payload.type === "preset") {
+                setActiveExecutingAction(name)
+                playPreset(payload.preset)
+            } else if (payload && payload.type === "motion") {
+                setActiveExecutingAction(name)
+                publishImmediate("hexapod/cmd", payload)
+                if (id === "stop") {
+                    stopStream()
+                    setActiveExecutingAction(null)
+                    onUpdate("pose", { pose: DEFAULT_POSE })
+                } else {
+                    playLocomotion(id, duration_ms || 3000)
+                    if (duration_ms > 0) {
+                        setTimeout(() => {
+                            publishImmediate("hexapod/cmd", { ...payload, vx: 0, vy: 0, omega: 0 })
+                        }, duration_ms)
+                    }
+                }
+            } else {
+                setActiveExecutingAction(name)
+                publishImmediate("hexapod/cmd", payload)
+            }
+        },
+        [publishAudio, publishImmediate, playPreset, playLocomotion, stopStream, onUpdate, handleSingleJoint]
+    )
+
     useEffect(() => {
         onMount(SECTION_NAMES.ai)
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2709,28 +2782,97 @@ const AIPanel = ({
         })
     }, [aiMessages])
 
+    // ── Helper: Robust Action Resolver for LLM Directives & Aliases ──────────────
+    const resolveAction = useCallback((msg, actionsList) => {
+        if (!msg) return null
+        const actionId = msg.action_id || msg.action
+
+        // 1. Single-Joint Stand Articulation
+        if (actionId === "single_joint" || msg.joint_params) {
+            return { id: "single_joint", joint_params: msg.joint_params }
+        }
+
+        // 2. Direct ID or Name Match
+        if (actionId) {
+            let found = actionsList.find(x => x.id === actionId || x.id.toLowerCase() === String(actionId).toLowerCase())
+            if (found) return found
+
+            found = actionsList.find(x => x.name.toLowerCase() === String(actionId).toLowerCase())
+            if (found) return found
+
+            found = matchAction(String(actionId), actionsList)
+            if (found) return found
+        }
+
+        // 3. Fallback: Parse intent directly from LLM conversational text
+        if (msg.content && typeof msg.content === "string") {
+            const found = matchAction(msg.content, actionsList)
+            if (found) return found
+        }
+
+        return null
+    }, [])
+
+    // ── 1. Watch for assistant directives arriving from RPi ──────────────────────
     useEffect(() => {
         if (!aiMessages || !aiMessages.length) return
         const last = aiMessages[aiMessages.length - 1]
-        if (!last || !last.action_id) return
+        if (!last) return
+
         const key = `${aiMessages.length}|${msgKey(last)}`
         if (lastDirectiveKeyRef.current === key) return
         lastDirectiveKeyRef.current = key
 
-        const a = ACTIONS.find(x => x.id === last.action_id)
-        if (a) {
-            if (a.payload && a.payload.type === "preset") {
-                playPreset(a.payload.preset)
-            } else if (a.payload && a.payload.type === "motion") {
-                playLocomotion(a.id, a.duration_ms || 3000)
+        const a = resolveAction(last, ACTIONS)
+        if (!a) return
+
+        const hasSpokenContent = last.role === "assistant" && typeof last.content === "string" && last.content.trim().length > 0
+        const isAudioActive = audioStatus && audioStatus.state === "playing"
+
+        // Queue action until S3 finishes speaking
+        if (hasSpokenContent || isAudioActive) {
+            console.log(`[AIPanel] Queuing action '${a.name || a.id}' until TTS speech finishes...`)
+            pendingDirectiveRef.current = { 
+                action: a, 
+                joint_params: last.joint_params,
+                hasStartedAudio: isAudioActive,
+                queuedAt: Date.now()
             }
+            return
         }
-    }, [aiMessages, playPreset, playLocomotion])
+
+        // Direct action without speech -> execute immediately
+        triggerAction(a, last.joint_params)
+    }, [aiMessages, audioStatus, triggerAction, resolveAction])
+
+    // ── 2. Track when audio officially starts playing on S3 ─────────────────────
+    useEffect(() => {
+        if (audioStatus && audioStatus.state === "playing" && pendingDirectiveRef.current) {
+            pendingDirectiveRef.current.hasStartedAudio = true
+        }
+    }, [audioStatus])
+
+    // ── 3. Safely fire queued actions once S3 speaker turns idle ────────────────
+    useEffect(() => {
+        if (!pendingDirectiveRef.current) return
+
+        const canExecute = (audioStatus && audioStatus.state === "idle" && pendingDirectiveRef.current.hasStartedAudio) ||
+                           (Date.now() - pendingDirectiveRef.current.queuedAt > 6000)
+
+        if (canExecute) {
+            const { action, joint_params } = pendingDirectiveRef.current
+            pendingDirectiveRef.current = null
+            console.log(`[AIPanel] TTS complete! Executing queued action: ${action.name || action.id}`)
+            const timer = setTimeout(() => {
+                triggerAction(action, joint_params)
+            }, 150)
+            return () => clearTimeout(timer)
+        }
+    }, [audioStatus, triggerAction])
 
     useEffect(() => {
         if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
     }, [messages])
-
     const push = useCallback((role, content, type = "text") => {
         setMessages(prev => [...prev, { role, type, content, ts: Date.now() }])
     }, [])
@@ -2740,36 +2882,14 @@ const AIPanel = ({
         clearAiMessages()
     }, [clearAiMessages])
 
-    const executeAction = useCallback(action => {
-        const { payload, topic, duration_ms, reply, name, id } = action
-
-        if (topic === "audio") {
-            // Audio is fire-and-forget; do NOT touch activeExecutingAction so running motion streams continue
-            publishAudio(payload)
-        } else if (payload && payload.type === "preset") {
-            setActiveExecutingAction(name)
-            playPreset(payload.preset)
-        } else if (payload && payload.type === "motion") {
-            setActiveExecutingAction(name)
-            publishImmediate("hexapod/cmd", payload)
-            if (id === "stop") {
-                stopStream()
-                setActiveExecutingAction(null)
-                onUpdate("pose", { pose: DEFAULT_POSE })
-            } else {
-                playLocomotion(id, duration_ms || 3000)
-                if (duration_ms > 0) {
-                    setTimeout(() => {
-                        publishImmediate("hexapod/cmd", { ...payload, vx: 0, vy: 0, omega: 0 })
-                    }, duration_ms)
-                }
-            }
-        } else {
-            setActiveExecutingAction(name)
-            publishImmediate("hexapod/cmd", payload)
-        }
-        push("assistant", reply || `Triggered action: ${name}`)
-    }, [publishAudio, publishImmediate, push, playPreset, playLocomotion, stopStream, onUpdate])
+    const executeAction = useCallback(
+        action => {
+            const { reply, name } = action
+            triggerAction(action)
+            push("assistant", reply || `Triggered action: ${name}`)
+        },
+        [triggerAction, push]
+    )
 
     const getCleanHistory = useCallback(() => {
         return messages
@@ -2790,7 +2910,7 @@ const AIPanel = ({
                 type: "text",
                 role: "user",
                 content: text,
-                history: getCleanHistory()
+                history: getCleanHistory(),
             })
             return
         }
@@ -2803,28 +2923,29 @@ const AIPanel = ({
         }
     }, [input, aiOnline, publishAi, push, executeAction, getCleanHistory, aiDeviceId])
 
-    const handleAudioSlice = useCallback((samples, sampleRate) => {
-        const pcm = to16kPcm(samples, sampleRate)
-        const wav = buildWav(pcm, 16000)
-        const b64 = bytesToBase64(wav)
-        
-        // Push a nice temporary user bubble
-        push("user", `🎤 Voice Query (${Math.round(wav.length / 32)}ms audio)...`, "text")
-        
-        if (aiOnline) {
-            publishAi({
-                type: "audio",
-                role: "user",
-                content: b64,
-                sample_rate_hz: 16000,
-                history: getCleanHistory()
-            })
-        } else {
-            push("system", "AI Service Offline: Voice transcription requires the live bridge.")
-        }
-    }, [push, aiOnline, publishAi, getCleanHistory])
+    const handleAudioSlice = useCallback(
+        (samples, sampleRate) => {
+            const pcm = to16kPcm(samples, sampleRate)
+            const wav = buildWav(pcm, 16000)
+            const b64 = bytesToBase64(wav)
 
-    // Finalize and bundle all accumulated audio chunks into 1 single log + payload
+            push("user", `🎤 Voice Query (${Math.round(wav.length / 32)}ms audio)...`, "text")
+
+            if (aiOnline) {
+                publishAi({
+                    type: "audio",
+                    role: "user",
+                    content: b64,
+                    sample_rate_hz: 16000,
+                    history: getCleanHistory(),
+                })
+            } else {
+                push("system", "AI Service Offline: Voice transcription requires the live bridge.")
+            }
+        },
+        [push, aiOnline, publishAi, getCleanHistory]
+    )
+
     const finalizeAudioRecording = useCallback(() => {
         const chunks = audioChunksRef.current
         audioChunksRef.current = []
@@ -2834,7 +2955,6 @@ const AIPanel = ({
         const totalLen = chunks.reduce((acc, c) => acc + c.length, 0)
         if (totalLen === 0) return
 
-        // Stitch Float32 chunks together
         const joined = new Float32Array(totalLen)
         let offset = 0
         for (let i = 0; i < chunks.length; i++) {
@@ -2848,12 +2968,10 @@ const AIPanel = ({
         const b64 = bytesToBase64(wav)
         const totalDurationMs = Math.round((pcm.length / 16000) * 1000)
 
-        // Drop accidental micro-clicks (< 200ms)
         if (totalDurationMs < 200) return
 
-        // 1 SINGLE CONSOLIDATED LOG
         push("user", `🎤 Voice Query (${totalDurationMs}ms audio)`)
-        
+
         if (aiOnline) {
             const history = messages
                 .filter(m => m.role === "user" || m.role === "assistant")
@@ -2888,7 +3006,6 @@ const AIPanel = ({
                 },
             })
 
-            // Buffer audio chunks quietly without spamming chat
             workletNode.port.onmessage = e => {
                 if (e.data && e.data.type === "audio_slice") {
                     if (e.data.samples && e.data.samples.length > 0) {
@@ -2914,8 +3031,7 @@ const AIPanel = ({
             try {
                 rec.workletNode.port.postMessage({ command: "flush" })
             } catch (e) {}
-            
-            // Allow 40ms for the final flush slice to hit the buffer before teardown
+
             setTimeout(() => {
                 if (rec.workletNode) rec.workletNode.disconnect()
                 if (rec.stream) rec.stream.getTracks().forEach(t => t.stop())
@@ -2934,6 +3050,7 @@ const AIPanel = ({
     const stopAll = () => {
         stopStream()
         activeReqIdRef.current++
+        pendingDirectiveRef.current = null
         setActiveExecutingAction(null)
         setActiveFrames([])
         publishImmediate("hexapod/cmd", { type: "motion", vx: 0, vy: 0, omega: 0 })
@@ -2953,17 +3070,19 @@ const AIPanel = ({
                 </h2>
                 <div style={{ display: "flex", gap: "6px" }}>
                     {activeExecutingAction && (
-                        <span style={{ 
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "5px",
-                            padding: "2px 8px", 
-                            borderRadius: "10px", 
-                            background: "rgba(252, 66, 123, 0.2)",
-                            border: "1px solid var(--c2-pink)",
-                            color: "var(--c2-pink)",
-                            fontSize: "0.65rem" 
-                        }}>
+                        <span
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "5px",
+                                padding: "2px 8px",
+                                borderRadius: "10px",
+                                background: "rgba(252, 66, 123, 0.2)",
+                                border: "1px solid var(--c2-pink)",
+                                color: "var(--c2-pink)",
+                                fontSize: "0.65rem",
+                            }}
+                        >
                             <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--c2-pink)", animation: "pulse 1s infinite" }} />
                             Active: {activeExecutingAction}
                         </span>
@@ -2980,26 +3099,30 @@ const AIPanel = ({
             </div>
 
             {/* Health Status Bar */}
-            <div style={{ 
-                display: "flex", 
-                flexWrap: "wrap", 
-                gap: "12px", 
-                alignItems: "center", 
-                padding: "6px 10px", 
-                borderRadius: "6px", 
-                background: aiOnline ? "rgba(50, 255, 126, 0.1)" : "rgba(255, 33, 33, 0.1)",
-                border: `1px solid ${aiOnline ? "rgba(50, 255, 126, 0.3)" : "rgba(255, 33, 33, 0.3)"}`,
-                fontSize: "0.72rem", 
-                marginBottom: "10px" 
-            }}>
+            <div
+                style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "12px",
+                    alignItems: "center",
+                    padding: "6px 10px",
+                    borderRadius: "6px",
+                    background: aiOnline ? "rgba(50, 255, 126, 0.1)" : "rgba(255, 33, 33, 0.1)",
+                    border: `1px solid ${aiOnline ? "rgba(50, 255, 126, 0.3)" : "rgba(255, 33, 33, 0.3)"}`,
+                    fontSize: "0.72rem",
+                    marginBottom: "10px",
+                }}
+            >
                 <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", fontWeight: "bold" }}>
-                    <span style={{ 
-                        width: 8, 
-                        height: 8, 
-                        borderRadius: "50%", 
-                        background: aiOnline ? "var(--c1-green)" : "var(--c6-red)", 
-                        display: "inline-block" 
-                    }} />
+                    <span
+                        style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            background: aiOnline ? "var(--c1-green)" : "var(--c6-red)",
+                            display: "inline-block",
+                        }}
+                    />
                     {aiOnline ? "AI Service: Online" : "AI Service: Offline (Direct Hardware Mode)"}
                 </span>
 
@@ -3019,16 +3142,16 @@ const AIPanel = ({
             </div>
 
             {/* Conversation Terminal */}
-            <div 
-                ref={chatRef} 
-                style={{ 
-                    height: 170, 
-                    overflowY: "auto", 
-                    border: "1px solid rgba(41, 128, 185, 0.4)", 
-                    borderRadius: "6px", 
-                    padding: "8px", 
-                    marginBottom: "8px", 
-                    background: "rgba(10, 15, 25, 0.7)" 
+            <div
+                ref={chatRef}
+                style={{
+                    height: 170,
+                    overflowY: "auto",
+                    border: "1px solid rgba(41, 128, 185, 0.4)",
+                    borderRadius: "6px",
+                    padding: "8px",
+                    marginBottom: "8px",
+                    background: "rgba(10, 15, 25, 0.7)",
                 }}
             >
                 {messages.length === 0 && (
@@ -3064,7 +3187,7 @@ const AIPanel = ({
                                     fontSize: "0.75rem",
                                     wordBreak: "break-word",
                                     whiteSpace: "pre-wrap",
-                                    textAlign: "left"
+                                    textAlign: "left",
                                 }}
                             >
                                 {m.content}
@@ -3082,13 +3205,21 @@ const AIPanel = ({
                     onChange={e => setInput(e.target.value)}
                     onKeyDown={e => e.key === "Enter" && handleSend()}
                     placeholder={aiOnline ? "Ask AI assistant anything…" : "Type a direct command (e.g., 'walk forward')…"}
-                    style={{ flex: 1, padding: "6px 10px", borderRadius: "6px", border: "1px solid rgba(41, 128, 185, 0.5)", background: "rgba(10, 15, 25, 0.8)", color: "#fff", height: "2.2rem" }}
+                    style={{
+                        flex: 1,
+                        padding: "6px 10px",
+                        borderRadius: "6px",
+                        border: "1px solid rgba(41, 128, 185, 0.5)",
+                        background: "rgba(10, 15, 25, 0.8)",
+                        color: "#fff",
+                        height: "2.2rem",
+                    }}
                     aria-label="AI input"
                 />
-                <button 
-                    type="button" 
-                    onClick={handleSend} 
-                    style={{ ...btnStyle, background: "var(--c4-blue)", color: "#fff", height: "2.2rem" }} 
+                <button
+                    type="button"
+                    onClick={handleSend}
+                    style={{ ...btnStyle, background: "var(--c4-blue)", color: "#fff", height: "2.2rem" }}
                     disabled={!input.trim()}
                 >
                     Send
@@ -3096,12 +3227,12 @@ const AIPanel = ({
                 <button
                     type="button"
                     onClick={recording ? stopMic : startMic}
-                    style={{ 
-                        ...btnStyle, 
-                        background: recording ? "var(--c6-red)" : "rgba(23, 33, 43, 0.9)", 
-                        color: recording ? "#fff" : "var(--c1-green)", 
+                    style={{
+                        ...btnStyle,
+                        background: recording ? "var(--c6-red)" : "rgba(23, 33, 43, 0.9)",
+                        color: recording ? "#fff" : "var(--c1-green)",
                         height: "2.2rem",
-                        minWidth: "75px"
+                        minWidth: "75px",
                     }}
                     disabled={micBlocked}
                     title={micBlocked ? "Microphone unavailable" : recording ? "Stop and send recording" : "Record voice query"}
@@ -3458,6 +3589,7 @@ export default InverseKinematicsPage
 # FILE: src\components\pages\JudgementPanel.js
 ================================================================================
 
+// web-ui/src/components/pages/JudgementPanel.js
 import React, { useState, useEffect, useCallback, useRef } from "react"
 import { SECTION_NAMES } from "../vars"
 import { useContinuousWakeWord } from "../../hooks/useContinuousWakeWord"
@@ -3470,6 +3602,7 @@ import { generatePresetFramesAsync, generateLocomotionFrames } from "../../hexap
 import { usePoseFrameStream } from "../../hooks/usePoseFrameStream"
 
 const ACTIONS = AI_ACTIONS.actions
+const msgKey = m => `${m.role}|${m.type}|${m.content}`
 
 const JudgementPanel = ({
     publishImmediate = () => {},
@@ -3481,8 +3614,8 @@ const JudgementPanel = ({
     hexapod = null,
     revision = 0,
     aiStatus = null,
+    audioStatus = null,
     aiMessages = [],
-    aiDeviceId = "hexapod-s3-01",
     params = {},
     onUpdate = () => {},
     onMount = () => {},
@@ -3491,11 +3624,14 @@ const JudgementPanel = ({
     const [activeFrames, setActiveFrames] = useState([])
     const [executingName, setExecutingName] = useState(null)
     const activeReqIdRef = useRef(0)
+    const pendingActionRef = useRef(null)
+    const lastDirectiveKeyRef = useRef(null)
+    const lastProcessedMsgRef = useRef(null)
 
     const aiOnline = Boolean(aiStatus && aiStatus.state !== "offline" && aiStatus.state !== "error")
 
-    const speakFeedback = (text) => {
-        if ("speechSynthesis" in window) {
+    const speakFeedback = text => {
+        if (!aiOnline && "speechSynthesis" in window) {
             window.speechSynthesis.cancel()
             const utterance = new SpeechSynthesisUtterance(text)
             utterance.rate = 1.05
@@ -3504,8 +3640,35 @@ const JudgementPanel = ({
         }
     }
 
+    const resolveAction = useCallback((msg, actionsList) => {
+        if (!msg) return null
+        const actionId = msg.action_id || msg.action
+
+        if (actionId === "single_joint" || msg.joint_params) {
+            return { id: "single_joint", joint_params: msg.joint_params }
+        }
+
+        if (actionId) {
+            let found = actionsList.find(x => x.id === actionId || x.id.toLowerCase() === String(actionId).toLowerCase())
+            if (found) return found
+
+            found = actionsList.find(x => x.name.toLowerCase() === String(actionId).toLowerCase())
+            if (found) return found
+
+            found = matchAction(String(actionId), actionsList)
+            if (found) return found
+        }
+
+        if (msg.content && typeof msg.content === "string") {
+            const found = matchAction(msg.content, actionsList)
+            if (found) return found
+        }
+
+        return null
+    }, [])
+
     const publishLivePose = useCallback(
-        (pose) => {
+        pose => {
             if (pose && typeof pose === "object") {
                 publishImmediate("hexapod/cmd", buildServoBatchPayload(pose))
             }
@@ -3513,15 +3676,14 @@ const JudgementPanel = ({
         [publishImmediate]
     )
 
-    const { stop: stopStream } = usePoseFrameStream(activeFrames, (pose) => {
-        // Only publish to MQTT for direct gesture presets (like Wave/Cheer), NOT during locomotion!
+    const { stop: stopStream } = usePoseFrameStream(activeFrames, pose => {
         if (executingName && !["walk_forward", "walk_backward", "turn_left", "turn_right", "spin"].includes(executingName)) {
             publishLivePose(pose)
         }
     })
 
     const playPreset = useCallback(
-        (presetName) => {
+        presetName => {
             if (!presetName) return
             stopStream()
             setExecutingName(presetName)
@@ -3529,7 +3691,7 @@ const JudgementPanel = ({
             const dims = (params && params.dimensions) || DEFAULT_DIMENSIONS
             const startPose = (params && params.pose) || DEFAULT_POSE
 
-            generatePresetFramesAsync(presetName, dims, 3, startPose, 30).then((frames) => {
+            generatePresetFramesAsync(presetName, dims, 3, startPose, 30).then(frames => {
                 if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
                     setActiveFrames(frames)
                 }
@@ -3546,7 +3708,7 @@ const JudgementPanel = ({
             const dims = (params && params.dimensions) || DEFAULT_DIMENSIONS
             const startPose = (params && params.pose) || DEFAULT_POSE
 
-            generateLocomotionFrames(actionId, dims, durationMs, startPose).then((frames) => {
+            generateLocomotionFrames(actionId, dims, durationMs, startPose).then(frames => {
                 if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
                     setActiveFrames(frames)
                 }
@@ -3555,6 +3717,68 @@ const JudgementPanel = ({
         [params, stopStream]
     )
 
+    const handleSingleJoint = useCallback(
+        jointParams => {
+            if (!jointParams || !jointParams.leg) return
+            const { leg, joint, angle = 0, mode = "relative" } = jointParams
+            const jointMap = { coxa: "alpha", coxia: "alpha", femur: "beta", tibia: "gamma" }
+            const angleParam = jointMap[joint] || joint
+
+            const currentPose = (params && params.pose) || DEFAULT_POSE
+            const currentAngle = (currentPose[leg] && currentPose[leg][angleParam]) || 0
+
+            let targetAngle = mode === "relative" ? currentAngle + angle : angle
+
+            if (angleParam === "alpha") targetAngle = Math.max(-40, Math.min(40, targetAngle))
+            if (angleParam === "beta") targetAngle = Math.max(-80, Math.min(80, targetAngle))
+            if (angleParam === "gamma") targetAngle = Math.max(-90, Math.min(90, targetAngle))
+
+            const newPose = {
+                ...currentPose,
+                [leg]: {
+                    ...currentPose[leg],
+                    [angleParam]: targetAngle,
+                },
+            }
+
+            setExecutingName(`FK: ${leg} ${joint}`)
+            onUpdate("pose", { pose: newPose })
+            publishImmediate("hexapod/cmd", buildServoBatchPayload(newPose))
+        },
+        [params, onUpdate, publishImmediate]
+    )
+
+    const triggerAction = useCallback(
+        (matchedAction, jointParams = null) => {
+            if (!matchedAction && !jointParams) return
+
+            if (matchedAction === "single_joint" || (matchedAction && matchedAction.id === "single_joint")) {
+                handleSingleJoint(jointParams || (matchedAction && matchedAction.joint_params))
+                return
+            }
+
+            const { payload, topic, name, id, duration_ms } = matchedAction
+            if (topic === "audio") {
+                publishAudio(payload)
+            } else if (payload && payload.type === "preset") {
+                playPreset(payload.preset)
+            } else if (payload && payload.type === "motion") {
+                publishImmediate("hexapod/cmd", payload)
+                if (id === "stop") {
+                    stopStream()
+                    setExecutingName(null)
+                    onUpdate("pose", { pose: DEFAULT_POSE })
+                } else {
+                    playLocomotion(id, duration_ms || 3000)
+                }
+            } else {
+                publishImmediate("hexapod/cmd", payload)
+            }
+        },
+        [publishAudio, playPreset, publishImmediate, stopStream, onUpdate, playLocomotion, handleSingleJoint]
+    )
+
+    // ── 24/7 Wake-Word Voice Command Handler ────────────────────────────────────
     const handleVoiceCommand = useCallback(
         (commandText, fullUtterance) => {
             const entry = {
@@ -3563,52 +3787,119 @@ const JudgementPanel = ({
                 full: fullUtterance,
                 command: commandText,
             }
-            setActionLog((prev) => [entry, ...prev.slice(0, 20)])
+            setActionLog(prev => [entry, ...prev.slice(0, 20)])
 
-            // Match against local action table
             const matchedAction = matchAction(commandText, ACTIONS)
 
-            if (matchedAction) {
-                const { payload, topic, reply, name, id, duration_ms } = matchedAction
-                speakFeedback(reply || `Executing ${name}`)
-
-                if (topic === "audio") {
-                    publishAudio(payload)
-                } else if (payload && payload.type === "preset") {
-                    playPreset(payload.preset)
-                } else if (payload && payload.type === "motion") {
-                    publishImmediate("hexapod/cmd", payload)
-                    if (id === "stop") {
-                        stopStream()
-                        setExecutingName(null)
-                        onUpdate("pose", { pose: DEFAULT_POSE })
-                    } else {
-                        playLocomotion(id, duration_ms || 3000)
+            // When AI is online: Route through RPi Groq LLM + Piper TTS (Robot Speaker)
+            if (aiOnline) {
+                if (matchedAction) {
+                    console.log(`[JudgementPanel] Pre-queuing voice action '${matchedAction.name}'...`)
+                    pendingActionRef.current = {
+                        action: matchedAction,
+                        joint_params: null,
+                        hasStartedAudio: (audioStatus && audioStatus.state === "playing"),
+                        queuedAt: Date.now(),
                     }
-                } else {
-                    publishImmediate("hexapod/cmd", payload)
                 }
-            } else if (aiOnline) {
-                // Forward directive to Pi-Hub LLM
+                
+                // Forward speech query to RPi
                 publishAi({
                     type: "text",
                     role: "user",
                     content: commandText,
                 })
-                speakFeedback("Processing directive.")
+                return
+            }
+
+            // Fallback: Offline mode (No RPi connected)
+            if (matchedAction) {
+                speakFeedback(matchedAction.reply || `Executing ${matchedAction.name}`)
+                triggerAction(matchedAction)
             } else {
                 speakFeedback("Command not recognized.")
             }
         },
-        [aiOnline, playPreset, playLocomotion, publishAi, publishAudio, publishImmediate, stopStream, onUpdate]
+        [aiOnline, audioStatus, publishAi, triggerAction]
     )
 
-    const { isListening, wakeWordState, lastTranscript, lastAcceptedCommand, micError } =
+    // ── 1. Watch for assistant directives arriving from RPi ──────────────────────
+    useEffect(() => {
+        if (!aiMessages || !aiMessages.length) return
+        const last = aiMessages[aiMessages.length - 1]
+        if (!last) return
+
+        const key = `${aiMessages.length}|${msgKey(last)}`
+        if (lastDirectiveKeyRef.current === key) return
+        lastDirectiveKeyRef.current = key
+
+        const a = resolveAction(last, ACTIONS)
+        if (!a) return
+
+        const hasSpokenContent = last.role === "assistant" && typeof last.content === "string" && last.content.trim().length > 0
+        const isAudioActive = audioStatus && audioStatus.state === "playing"
+
+        if (hasSpokenContent || isAudioActive) {
+            console.log(`[JudgementPanel] Queuing directive '${a.name || a.id}' until TTS speech finishes...`)
+            pendingActionRef.current = { 
+                action: a, 
+                joint_params: last.joint_params,
+                hasStartedAudio: isAudioActive,
+                queuedAt: Date.now()
+            }
+            return
+        }
+
+        triggerAction(a, last.joint_params)
+    }, [aiMessages, audioStatus, triggerAction, resolveAction])
+
+    // ── 2. Track when audio officially starts playing on S3 ─────────────────────
+    useEffect(() => {
+        if (audioStatus && audioStatus.state === "playing" && pendingActionRef.current) {
+            pendingActionRef.current.hasStartedAudio = true
+        }
+    }, [audioStatus])
+
+    // ── 3. Execute queued action ONLY after S3 speaker finishes playing ──────────
+    useEffect(() => {
+        if (!pendingActionRef.current) return
+
+        const canExecute = (audioStatus && audioStatus.state === "idle" && pendingActionRef.current.hasStartedAudio) ||
+                           (Date.now() - pendingActionRef.current.queuedAt > 6000)
+
+        if (canExecute) {
+            const { action, joint_params } = pendingActionRef.current
+            pendingActionRef.current = null
+            console.log(`[JudgementPanel] TTS complete! Executing queued action: ${action.name || action.id}`)
+            const timer = setTimeout(() => {
+                triggerAction(action, joint_params)
+            }, 150)
+            return () => clearTimeout(timer)
+        }
+    }, [audioStatus, triggerAction])
+
+    // Initialize the continuous wake-word sentinel
+    const { isListening, wakeWordState, lastTranscript, lastAcceptedCommand, micError, filterAndDispatch } =
         useContinuousWakeWord({
             onCommand: handleVoiceCommand,
-            minConfidence: 0.45,
+            publishAi,
+            aiOnline,
+            audioStatus,
             enabled: true,
         })
+
+    // Bridge incoming RPi Whisper STT transcriptions to the wake-word sentinel
+    useEffect(() => {
+        if (!aiMessages || !aiMessages.length) return
+        const lastMsg = aiMessages[aiMessages.length - 1]
+        if (!lastMsg || lastMsg.type !== "transcription" || !lastMsg.content) return
+
+        const msgId = `${lastMsg.timestamp || ""}_${lastMsg.content}`
+        if (lastProcessedMsgRef.current === msgId) return
+        lastProcessedMsgRef.current = msgId
+
+        filterAndDispatch(lastMsg.content)
+    }, [aiMessages, filterAndDispatch])
 
     useEffect(() => {
         onMount(SECTION_NAMES.judgement || "Judgement")
@@ -3617,7 +3908,6 @@ const JudgementPanel = ({
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: "12px", width: "100%" }}>
-            {/* Top: Balanced Side-by-Side Viewport */}
             <div style={{ height: "460px", width: "100%" }}>
                 <DualStageViewport
                     camConfig={camConfig}
@@ -3628,7 +3918,6 @@ const JudgementPanel = ({
                 />
             </div>
 
-            {/* Bottom: 24/7 Voice & Judgement Status HUD */}
             <div className="border" style={{ padding: "12px", backgroundColor: "rgba(15, 23, 42, 0.75)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
                     <h3 style={{ margin: 0, color: "var(--c1-green)", fontSize: "0.95rem" }}>
@@ -3649,7 +3938,6 @@ const JudgementPanel = ({
                 )}
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", fontSize: "0.72rem" }}>
-                    {/* Live Audio & Transcript Monitor */}
                     <div style={panelBoxStyle}>
                         <div style={{ color: "#94a3b8", fontWeight: "bold", marginBottom: "4px" }}>
                             AUDIO STREAM ANALYSIS:
@@ -3666,7 +3954,6 @@ const JudgementPanel = ({
                         </div>
                     </div>
 
-                    {/* Filter Status Guide */}
                     <div style={panelBoxStyle}>
                         <div style={{ color: "#94a3b8", fontWeight: "bold", marginBottom: "4px" }}>
                             GATE CRITERIA:
@@ -3679,14 +3966,13 @@ const JudgementPanel = ({
                     </div>
                 </div>
 
-                {/* Directive Execution Log */}
                 {actionLog.length > 0 && (
                     <div style={{ marginTop: "10px" }}>
                         <div style={{ fontSize: "0.7rem", color: "#94a3b8", fontWeight: "bold", marginBottom: "4px" }}>
                             DIRECTIVE HISTORY:
                         </div>
                         <div style={historyBoxStyle}>
-                            {actionLog.map((item) => (
+                            {actionLog.map(item => (
                                 <div key={item.id} style={{ display: "flex", justifyContent: "space-between", gap: "10px" }}>
                                     <span style={{ color: "var(--c4-blue)" }}>[{item.time}]</span>
                                     <span style={{ flex: 1, color: "var(--c1-green)" }}>{item.command}</span>
@@ -3742,7 +4028,7 @@ const stateBadgeStyle = (state, isListening) => {
     }
 }
 
-const pulseDotStyle = (active) => ({
+const pulseDotStyle = active => ({
     width: 6,
     height: 6,
     borderRadius: "50%",
@@ -8231,130 +8517,186 @@ export default getWalkSequence
 
 // web-ui/src/hooks/useContinuousWakeWord.js
 import { useState, useEffect, useRef, useCallback } from "react"
+import { to16kPcm, buildWav, bytesToBase64 } from "../utils/aiAudio"
 
-// Strict wake-word regex: matches "hey spider <command>" or "hey hexapod <command>"
-const WAKE_WORD_REGEX = /^(?:hey|ok|okay|hi)\s+(?:spider|hexapod)\b[\s,.:;]*(.+)$/i
-
-// Standalone wake word (e.g. user just said "hey spider" without trailing command)
-const STANDALONE_WAKE_REGEX = /^(?:hey|ok|okay|hi)\s+(?:spider|hexapod)[\s,.:;?!]*$/i
+const WAKE_WORD_REGEX = /^(?:hey|ok|okay|hi|hello)[\s,.:;!?-]+(?:spider|hexapod)\b[\s,.:;!?-]*(.+)$/i
+const STANDALONE_WAKE_REGEX = /^(?:hey|ok|okay|hi|hello)[\s,.:;!?-]+(?:spider|hexapod)[\s,.:;!?-]*$/i
 
 export const useContinuousWakeWord = ({
     onCommand = () => {},
-    minConfidence = 0.45,
+    publishAi = () => {},
+    aiOnline = false,
+    audioStatus = null,
+    isMuted = false,
     enabled = true,
+    listenTimeoutMs = 6000,
 }) => {
     const [isListening, setIsListening] = useState(false)
-    const [wakeWordState, setWakeWordState] = useState("idle") // "idle" | "listening_prompt" | "recognized" | "ignored"
+    const [wakeWordState, setWakeWordState] = useState("idle")
     const [lastTranscript, setLastTranscript] = useState("")
     const [lastAcceptedCommand, setLastAcceptedCommand] = useState("")
     const [micError, setMicError] = useState(null)
 
-    const recognitionRef = useRef(null)
     const isMountedRef = useRef(true)
+    const myVadRef = useRef(null)
+    const isPromptActiveRef = useRef(false)
+    const promptTimerRef = useRef(null)
+
+    // Keep dynamic prop references up-to-date across re-renders
+    const isMutedRef = useRef(isMuted)
+    isMutedRef.current = isMuted
+    const audioStatusRef = useRef(audioStatus)
+    audioStatusRef.current = audioStatus
+
     const onCommandRef = useRef(onCommand)
     onCommandRef.current = onCommand
+    const publishAiRef = useRef(publishAi)
+    publishAiRef.current = publishAi
+    const aiOnlineRef = useRef(aiOnline)
+    aiOnlineRef.current = aiOnline
 
-    const processUtterance = useCallback((rawTranscript, confidence) => {
-        const trimmed = rawTranscript.trim()
+    const clearPromptTimer = () => {
+        if (promptTimerRef.current) {
+            clearTimeout(promptTimerRef.current)
+            promptTimerRef.current = null
+        }
+        isPromptActiveRef.current = false
+    }
+
+    const openListeningWindow = useCallback(() => {
+        clearPromptTimer()
+        isPromptActiveRef.current = true
+        setWakeWordState("listening_prompt")
+        promptTimerRef.current = setTimeout(() => {
+            isPromptActiveRef.current = false
+            setWakeWordState("idle")
+        }, listenTimeoutMs)
+    }, [listenTimeoutMs])
+
+    const filterAndDispatch = useCallback((rawTranscript) => {
+        if (!rawTranscript) return false
+
+        // Strip microphone emojis, wrapping quotes, and punctuation
+        let trimmed = rawTranscript.trim()
+        trimmed = trimmed.replace(/^🎤\s*["']?|["']?$/g, "").replace(/^[^a-zA-Z0-9]+/, "").trim()
+        if (!trimmed) return false
+
         setLastTranscript(trimmed)
 
-        // 1. Mumble & Confidence filter: Discard low-confidence or overly brief artifacts
-        if (confidence > 0 && confidence < minConfidence) {
-            setWakeWordState("ignored")
-            return
-        }
-
-        // 2. Standalone wake word greeting ("Hey Spider")
+        // 1. Standalone Wake Word ("Hey Spider")
         if (STANDALONE_WAKE_REGEX.test(trimmed)) {
-            setWakeWordState("listening_prompt")
-            return
+            openListeningWindow()
+            return true
         }
 
-        // 3. Strict Wake Word + Directive sentence ("Hey Spider, walk forward")
+        // 2. Wake Word + Directive Command ("Hey Spider, walk forward")
         const match = trimmed.match(WAKE_WORD_REGEX)
         if (match && match[1]) {
             const extractedCommand = match[1].trim()
-            // Ensure the command is not just mumbling or single meaningless characters
             if (extractedCommand.length >= 2) {
+                clearPromptTimer()
                 setWakeWordState("recognized")
                 setLastAcceptedCommand(extractedCommand)
                 onCommandRef.current(extractedCommand, trimmed)
-                return
+                return true
             }
         }
 
-        // 4. Background chatter or speech not addressed to the hexapod
+        // 3. Command inside active listening prompt window
+        if (isPromptActiveRef.current) {
+            clearPromptTimer()
+            setWakeWordState("recognized")
+            setLastAcceptedCommand(trimmed)
+            onCommandRef.current(trimmed, trimmed)
+            return true
+        }
+
+        // 4. Dropped ambient chatter / unrelated conversation
         setWakeWordState("ignored")
-    }, [minConfidence])
+        return false
+    }, [openListeningWindow])
 
     useEffect(() => {
         isMountedRef.current = true
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
 
-        if (!SpeechRecognition) {
-            setMicError("Speech recognition is not supported in this browser. Please use Chrome or Edge.")
-            return undefined
-        }
-
-        const recognition = new SpeechRecognition()
-        recognition.continuous = true
-        recognition.interimResults = false
-        recognition.lang = "en-US"
-        recognition.maxAlternatives = 1
-        recognitionRef.current = recognition
-
-        recognition.onstart = () => {
-            if (isMountedRef.current) {
-                setIsListening(true)
-                setMicError(null)
+        const initVAD = async () => {
+            if (!window.vad) {
+                await new Promise((resolve) => setTimeout(resolve, 500))
             }
-        }
-
-        recognition.onresult = (event) => {
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-                if (event.results[i].isFinal) {
-                    const transcript = event.results[i][0].transcript
-                    const confidence = event.results[i][0].confidence || 1.0
-                    processUtterance(transcript, confidence)
-                }
+            if (!window.vad) {
+                setMicError("AI Voice engine failed to load from CDN. Check network.")
+                return
             }
-        }
 
-        recognition.onerror = (event) => {
-            if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-                setMicError("Microphone permission denied. Enable microphone access to use 24/7 voice.")
-                setIsListening(false)
-            }
-        }
-
-        // Resilient auto-restart loop for 24/7 continuous listening
-        recognition.onend = () => {
-            if (isMountedRef.current && enabled) {
-                try {
-                    recognition.start()
-                } catch (e) {
-                    // Ignore restart race errors
-                }
-            } else if (isMountedRef.current) {
-                setIsListening(false)
-            }
-        }
-
-        if (enabled) {
             try {
-                recognition.start()
-            } catch (e) {
-                console.warn("[WakeWord] Error starting recognition:", e)
+                const myvad = await window.vad.MicVAD.new({
+                    baseAssetPath: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/",
+                    onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/",
+                    positiveSpeechThreshold: 0.65,
+                    minSpeechFrames: 4,
+                    preSpeechPadFrames: 5,
+
+                    onSpeechEnd: (audio) => {
+                        const isEspPlaying = audioStatusRef.current && audioStatusRef.current.state === "playing"
+                        if (isMutedRef.current || isEspPlaying) {
+                            return
+                        }
+
+                        // Convert 16kHz audio slice to Base64 WAV
+                        const pcm = to16kPcm(audio, 16000)
+                        const wav = buildWav(pcm, 16000)
+                        const b64 = bytesToBase64(wav)
+
+                        if (aiOnlineRef.current) {
+                            publishAiRef.current({
+                                type: "audio",
+                                role: "user",
+                                content: b64,
+                                sample_rate_hz: 16000,
+                                is_sentinel: true,
+                            })
+                        }
+                    },
+                })
+
+                myVadRef.current = myvad
+
+                if (enabled && isMountedRef.current) {
+                    myvad.start()
+                    setIsListening(true)
+                    setMicError(null)
+                }
+            } catch (err) {
+                console.error("[Silero VAD] Init error:", err)
+                if (isMountedRef.current) {
+                    setMicError("AI Microphone failed to initialize.")
+                    setIsListening(false)
+                }
             }
         }
+
+        initVAD()
 
         return () => {
             isMountedRef.current = false
-            try {
-                recognition.stop()
-            } catch (e) {}
+            clearPromptTimer()
+            if (myVadRef.current) {
+                myVadRef.current.destroy()
+                myVadRef.current = null
+            }
         }
-    }, [enabled, processUtterance])
+    }, [])
+
+    useEffect(() => {
+        if (!myVadRef.current) return
+        if (enabled) {
+            myVadRef.current.start()
+            setIsListening(true)
+        } else {
+            myVadRef.current.pause()
+            setIsListening(false)
+        }
+    }, [enabled])
 
     return {
         isListening,
@@ -8362,6 +8704,7 @@ export const useContinuousWakeWord = ({
         lastTranscript,
         lastAcceptedCommand,
         micError,
+        filterAndDispatch,
     }
 }
 
@@ -8479,6 +8822,15 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
                         setCamTelemetry(parsed)
                     } else {
                         setTelemetry(parsed)
+                        
+                        // Sync audio status from telemetry heartbeat if available
+                        if (parsed.audio) {
+                            setAudioStatus(prev => ({
+                                state: parsed.audio,
+                                action: (prev && prev.action) || "tts"
+                            }))
+                        }
+
                         if (parsed.pose && typeof window !== "undefined") {
                             window.dispatchEvent(
                                 new CustomEvent("hexapod-telemetry-frame", { detail: parsed.pose })

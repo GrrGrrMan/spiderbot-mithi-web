@@ -25,6 +25,7 @@ export const useContinuousWakeWord = ({
     const isPromptActiveRef = useRef(false)
     const promptTimerRef = useRef(null)
 
+    // Keep dynamic prop references up-to-date across re-renders
     const isMutedRef = useRef(isMuted)
     isMutedRef.current = isMuted
     const audioStatusRef = useRef(audioStatus)
@@ -56,11 +57,13 @@ export const useContinuousWakeWord = ({
     }, [listenTimeoutMs])
 
     const filterAndDispatch = useCallback((rawTranscript) => {
-        // Strip leading emojis, mic icons, quotes, and symbols
+        if (!rawTranscript) return false
+
+        // Strip microphone emojis, wrapping quotes, and punctuation
         let trimmed = rawTranscript.trim()
-        trimmed = trimmed.replace(/^[^a-zA-Z0-9]+/, "").replace(/["']+$/, "").trim()
-        
+        trimmed = trimmed.replace(/^🎤\s*["']?|["']?$/g, "").replace(/^[^a-zA-Z0-9]+/, "").trim()
         if (!trimmed) return false
+
         setLastTranscript(trimmed)
 
         // 1. Standalone Wake Word ("Hey Spider")
@@ -69,7 +72,7 @@ export const useContinuousWakeWord = ({
             return true
         }
 
-        // 2. Wake Word + Command ("Hey Spider, what's up?")
+        // 2. Wake Word + Directive Command ("Hey Spider, walk forward")
         const match = trimmed.match(WAKE_WORD_REGEX)
         if (match && match[1]) {
             const extractedCommand = match[1].trim()
@@ -82,7 +85,7 @@ export const useContinuousWakeWord = ({
             }
         }
 
-        // 3. Command inside active listening window
+        // 3. Command inside active listening prompt window
         if (isPromptActiveRef.current) {
             clearPromptTimer()
             setWakeWordState("recognized")
@@ -91,10 +94,11 @@ export const useContinuousWakeWord = ({
             return true
         }
 
-        // 4. Dropped ambient chatter
+        // 4. Dropped ambient chatter / unrelated conversation
         setWakeWordState("ignored")
         return false
     }, [openListeningWindow])
+
     useEffect(() => {
         isMountedRef.current = true
 
@@ -109,10 +113,8 @@ export const useContinuousWakeWord = ({
 
             try {
                 const myvad = await window.vad.MicVAD.new({
-                    // Explicit CDN asset paths for v0.0.29 / ONNX 1.22.0
                     baseAssetPath: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/",
                     onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/",
-                    
                     positiveSpeechThreshold: 0.65,
                     minSpeechFrames: 4,
                     preSpeechPadFrames: 5,
@@ -123,7 +125,7 @@ export const useContinuousWakeWord = ({
                             return
                         }
 
-                        // audio is a clean 16kHz Float32Array
+                        // Convert 16kHz audio slice to Base64 WAV
                         const pcm = to16kPcm(audio, 16000)
                         const wav = buildWav(pcm, 16000)
                         const b64 = bytesToBase64(wav)
