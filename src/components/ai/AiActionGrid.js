@@ -2,10 +2,15 @@
 import React from "react"
 
 export const AiActionGrid = ({ actions, activeExecutingAction, onExecuteAction, onStopAll }) => {
-    const movementActions = actions.filter(a => ["walk_forward", "walk_backward", "turn_left", "turn_right", "spin", "stop"].includes(a.id))
-    const presetActions = actions.filter(a => a.payload?.type === "preset")
-    const audioActions = actions.filter(a => a.topic === "audio")
-    const systemActions = actions.filter(a => ["freeze", "wake"].includes(a.id))
+    // 1. Dynamic Categorization (Future-Proof against schema additions)
+    const movementActions = actions.filter(a => 
+        ["walk_forward", "walk_backward", "turn_left", "turn_right", "spin", "stop"].includes(a.id)
+    )
+    const gestureActions = actions.filter(a => 
+        a.payload?.type === "sequence" || a.payload?.type === "preset" || a.id.startsWith("preset_")
+    )
+    const audioActions = actions.filter(a => a.topic === "audio" || a.payload?.action)
+    const systemActions = actions.filter(a => ["freeze", "wake"].includes(a.id) || a.payload?.type === "system")
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -47,14 +52,14 @@ export const AiActionGrid = ({ actions, activeExecutingAction, onExecuteAction, 
                 </div>
             </div>
 
-            {/* Presets */}
+            {/* Dynamic Gestures & Sequences */}
             <div>
                 <div style={{ fontSize: "0.7rem", fontWeight: "bold", color: "#94a3b8", marginBottom: "4px" }}>
-                    🎭 DYNAMIC GESTURE PRESETS (60FPS Interpolated)
+                    🎭 DYNAMIC GESTURE SEQUENCES (60FPS Interpolated)
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                    {presetActions.map(a => {
-                        const isRunning = activeExecutingAction === a.payload?.preset || activeExecutingAction === a.name
+                    {gestureActions.map(a => {
+                        const isRunning = activeExecutingAction === a.payload?.name || activeExecutingAction === a.payload?.preset || activeExecutingAction === a.name
                         return (
                             <button
                                 key={a.id}

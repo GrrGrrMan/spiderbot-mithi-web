@@ -2,32 +2,22 @@
 import { useState, useRef, useCallback } from "react"
 import { DEFAULT_POSE, DEFAULT_DIMENSIONS } from "../templates"
 import { buildServoBatchPayload } from "../utils/servoMapper"
-import { generatePresetFramesAsync, generateLocomotionFrames } from "../hexapod/solvers/motionSynthesizer"
+import { 
+    generatePresetFramesAsync, 
+    generateLocomotionFrames, 
+    generateDynamicSequenceFramesAsync 
+} from "../hexapod/solvers/motionSynthesizer"
 import { usePoseFrameStream } from "./usePoseFrameStream"
-
-const LOCOMOTION_IDS = ["walk_forward", "walk_backward", "turn_left", "turn_right", "spin"]
 
 export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, publishAudio = () => {}, onUpdate = () => {} }) => {
     const [activeFrames, setActiveFrames] = useState([])
     const [activeExecutingAction, setActiveExecutingAction] = useState(null)
     const activeReqIdRef = useRef(0)
 
-    const publishLivePose = useCallback(
-        pose => {
-            if (pose && typeof pose === "object") {
-                publishImmediate("hexapod/cmd", buildServoBatchPayload(pose))
-            }
-        },
-        [publishImmediate]
-    )
-
+    // Local 60 FPS Visualizer (Zero MQTT Pose Spamming)
     const { stop: stopStream } = usePoseFrameStream(
         activeFrames,
-        pose => {
-            if (activeExecutingAction && !LOCOMOTION_IDS.includes(activeExecutingAction)) {
-                publishLivePose(pose)
-            }
-        },
+        () => {}, 
         {
             onComplete: finalPose => {
                 if (finalPose && typeof finalPose === "object") {
@@ -38,22 +28,35 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
         }
     )
 
-    const playPreset = useCallback(
-        presetName => {
-            if (!presetName) return
+    const playSequence = useCallback(
+        (actionPayload, actionName) => {
+            if (!actionPayload) return
             stopStream()
-            setActiveExecutingAction(presetName)
+            const name = actionName || actionPayload.name || actionPayload.preset || "gesture"
+            setActiveExecutingAction(name)
             const reqId = ++activeReqIdRef.current
             const dims = params?.dimensions || DEFAULT_DIMENSIONS
             const startPose = params?.pose || DEFAULT_POSE
 
-            generatePresetFramesAsync(presetName, dims, 3, startPose, 30).then(frames => {
-                if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
-                    setActiveFrames(frames)
-                }
-            })
+            // 1. Transmit sequence command to physical ESP32-S3 node
+            publishImmediate("hexapod/cmd", actionPayload)
+
+            // 2. Animate 3D Web-UI model dynamically
+            if (actionPayload.keyframes && Array.isArray(actionPayload.keyframes)) {
+                generateDynamicSequenceFramesAsync(actionPayload.keyframes, dims, startPose).then(frames => {
+                    if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
+                        setActiveFrames(frames)
+                    }
+                })
+            } else {
+                generatePresetFramesAsync(actionPayload.preset || name, dims, 3, startPose, 30).then(frames => {
+                    if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
+                        setActiveFrames(frames)
+                    }
+                })
+            }
         },
-        [params, stopStream]
+        [params, stopStream, publishImmediate]
     )
 
     const playLocomotion = useCallback(
@@ -109,9 +112,8 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
 
             if (topic === "audio") {
                 publishAudio(payload)
-            } else if (payload?.type === "preset") {
-                setActiveExecutingAction(name)
-                playPreset(payload.preset)
+            } else if (payload?.type === "sequence" || payload?.type === "preset" || id?.startsWith("preset_")) {
+                playSequence(payload, name)
             } else if (payload?.type === "motion") {
                 setActiveExecutingAction(name)
                 publishImmediate("hexapod/cmd", payload)
@@ -132,7 +134,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
                 publishImmediate("hexapod/cmd", payload)
             }
         },
-        [publishAudio, publishImmediate, playPreset, playLocomotion, stopStream, onUpdate, handleSingleJoint]
+        [publishAudio, publishImmediate, playSequence, playLocomotion, stopStream, onUpdate, handleSingleJoint]
     )
 
     const stopAll = useCallback(() => {

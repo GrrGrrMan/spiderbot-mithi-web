@@ -363,3 +363,61 @@ export async function generateLocomotionFrames(actionId, dimensions, durationMs 
 
     return frames
 }
+
+export async function generateDynamicSequenceFramesAsync(keyframes, dimensions, startPose = DEFAULT_POSE) {
+    if (!keyframes || !Array.isArray(keyframes) || keyframes.length === 0) {
+        return [startPose, DEFAULT_POSE]
+    }
+
+    const LEG_KEYS = {
+        rf: "rightFront",
+        rm: "rightMiddle",
+        rr: "rightBack",
+        lr: "leftBack",
+        lm: "leftMiddle",
+        lf: "leftFront",
+    }
+
+    const convertedPoses = []
+    convertedPoses.push(startPose)
+
+    for (let i = 0; i < keyframes.length; i++) {
+        const kf = keyframes[i]
+        let framePose = JSON.parse(JSON.stringify(DEFAULT_POSE))
+
+        // A. Body Cartesian IK Keyframe
+        if (kf.tx !== undefined || kf.ty !== undefined || kf.tz !== undefined || kf.rx !== undefined || kf.ry !== undefined || kf.rz !== undefined) {
+            framePose = getIkPose(dimensions, {
+                tx: (kf.tx || 0) / 100.0,
+                ty: (kf.ty || 0) / 100.0,
+                tz: (kf.tz || 0) / 132.0,
+                rx: kf.rx || 0,
+                ry: kf.ry || 0,
+                rz: kf.rz || 0,
+                hipStance: 20,
+                legStance: 0,
+            })
+        }
+
+        // B. Joint Overrides (e.g. waving front leg)
+        if (kf.joints && typeof kf.joints === "object") {
+            Object.entries(kf.joints).forEach(([shortKey, angles]) => {
+                const fullLegName = LEG_KEYS[shortKey] || shortKey
+                if (framePose[fullLegName]) {
+                    framePose[fullLegName] = {
+                        alpha: angles.alpha !== undefined ? angles.alpha : framePose[fullLegName].alpha,
+                        beta: angles.beta !== undefined ? angles.beta : framePose[fullLegName].beta,
+                        gamma: angles.gamma !== undefined ? angles.gamma : framePose[fullLegName].gamma,
+                    }
+                }
+            })
+        }
+
+        convertedPoses.push(framePose)
+    }
+
+    // Return to neutral stance at the end of gesture
+    convertedPoses.push(DEFAULT_POSE)
+
+    return await buildSequenceFromKeyframesAsync(convertedPoses, 15)
+}
