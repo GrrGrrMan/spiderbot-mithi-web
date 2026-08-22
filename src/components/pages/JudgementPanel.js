@@ -1,3 +1,4 @@
+// web-ui/src/components/pages/JudgementPanel.js
 import React, { useState, useEffect, useCallback, useRef } from "react"
 import { SECTION_NAMES } from "../vars"
 import { useContinuousWakeWord } from "../../hooks/useContinuousWakeWord"
@@ -11,6 +12,8 @@ import { usePoseFrameStream } from "../../hooks/usePoseFrameStream"
 
 const ACTIONS = AI_ACTIONS.actions
 
+const msgKey = m => `${m.role}|${m.type}|${m.content}`
+
 const JudgementPanel = ({
     publishImmediate = () => {},
     publishAi = () => {},
@@ -21,6 +24,7 @@ const JudgementPanel = ({
     hexapod = null,
     revision = 0,
     aiStatus = null,
+    audioStatus = null,
     aiMessages = [],
     aiDeviceId = "hexapod-s3-01",
     params = {},
@@ -31,10 +35,12 @@ const JudgementPanel = ({
     const [activeFrames, setActiveFrames] = useState([])
     const [executingName, setExecutingName] = useState(null)
     const activeReqIdRef = useRef(0)
+    const pendingActionRef = useRef(null)
+    const lastDirectiveKeyRef = useRef(null)
 
     const aiOnline = Boolean(aiStatus && aiStatus.state !== "offline" && aiStatus.state !== "error")
 
-    const speakFeedback = (text) => {
+    const speakFeedback = text => {
         if ("speechSynthesis" in window) {
             window.speechSynthesis.cancel()
             const utterance = new SpeechSynthesisUtterance(text)
@@ -45,7 +51,7 @@ const JudgementPanel = ({
     }
 
     const publishLivePose = useCallback(
-        (pose) => {
+        pose => {
             if (pose && typeof pose === "object") {
                 publishImmediate("hexapod/cmd", buildServoBatchPayload(pose))
             }
@@ -53,15 +59,14 @@ const JudgementPanel = ({
         [publishImmediate]
     )
 
-    const { stop: stopStream } = usePoseFrameStream(activeFrames, (pose) => {
-        // Only publish to MQTT for direct gesture presets (like Wave/Cheer), NOT during locomotion!
+    const { stop: stopStream } = usePoseFrameStream(activeFrames, pose => {
         if (executingName && !["walk_forward", "walk_backward", "turn_left", "turn_right", "spin"].includes(executingName)) {
             publishLivePose(pose)
         }
     })
 
     const playPreset = useCallback(
-        (presetName) => {
+        presetName => {
             if (!presetName) return
             stopStream()
             setExecutingName(presetName)
@@ -69,7 +74,7 @@ const JudgementPanel = ({
             const dims = (params && params.dimensions) || DEFAULT_DIMENSIONS
             const startPose = (params && params.pose) || DEFAULT_POSE
 
-            generatePresetFramesAsync(presetName, dims, 3, startPose, 30).then((frames) => {
+            generatePresetFramesAsync(presetName, dims, 3, startPose, 30).then(frames => {
                 if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
                     setActiveFrames(frames)
                 }
@@ -86,13 +91,74 @@ const JudgementPanel = ({
             const dims = (params && params.dimensions) || DEFAULT_DIMENSIONS
             const startPose = (params && params.pose) || DEFAULT_POSE
 
-            generateLocomotionFrames(actionId, dims, durationMs, startPose).then((frames) => {
+            generateLocomotionFrames(actionId, dims, durationMs, startPose).then(frames => {
                 if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
                     setActiveFrames(frames)
                 }
             })
         },
         [params, stopStream]
+    )
+
+    const handleSingleJoint = useCallback(
+        jointParams => {
+            if (!jointParams || !jointParams.leg) return
+            const { leg, joint, angle = 0, mode = "relative" } = jointParams
+            const jointMap = { coxa: "alpha", coxia: "alpha", femur: "beta", tibia: "gamma" }
+            const angleParam = jointMap[joint] || joint
+
+            const currentPose = (params && params.pose) || DEFAULT_POSE
+            const currentAngle = (currentPose[leg] && currentPose[leg][angleParam]) || 0
+
+            let targetAngle = mode === "relative" ? currentAngle + angle : angle
+
+            if (angleParam === "alpha") targetAngle = Math.max(-40, Math.min(40, targetAngle))
+            if (angleParam === "beta") targetAngle = Math.max(-80, Math.min(80, targetAngle))
+            if (angleParam === "gamma") targetAngle = Math.max(-90, Math.min(90, targetAngle))
+
+            const newPose = {
+                ...currentPose,
+                [leg]: {
+                    ...currentPose[leg],
+                    [angleParam]: targetAngle,
+                },
+            }
+
+            setExecutingName(`FK: ${leg} ${joint}`)
+            onUpdate("pose", { pose: newPose })
+            publishImmediate("hexapod/cmd", buildServoBatchPayload(newPose))
+        },
+        [params, onUpdate, publishImmediate]
+    )
+
+    const triggerAction = useCallback(
+        (matchedAction, jointParams = null) => {
+            if (!matchedAction && !jointParams) return
+
+            if (matchedAction === "single_joint" || (matchedAction && matchedAction.id === "single_joint")) {
+                handleSingleJoint(jointParams || (matchedAction && matchedAction.joint_params))
+                return
+            }
+
+            const { payload, topic, name, id, duration_ms } = matchedAction
+            if (topic === "audio") {
+                publishAudio(payload)
+            } else if (payload && payload.type === "preset") {
+                playPreset(payload.preset)
+            } else if (payload && payload.type === "motion") {
+                publishImmediate("hexapod/cmd", payload)
+                if (id === "stop") {
+                    stopStream()
+                    setExecutingName(null)
+                    onUpdate("pose", { pose: DEFAULT_POSE })
+                } else {
+                    playLocomotion(id, duration_ms || 3000)
+                }
+            } else {
+                publishImmediate("hexapod/cmd", payload)
+            }
+        },
+        [publishAudio, playPreset, publishImmediate, stopStream, onUpdate, playLocomotion, handleSingleJoint]
     )
 
     const handleVoiceCommand = useCallback(
@@ -103,45 +169,67 @@ const JudgementPanel = ({
                 full: fullUtterance,
                 command: commandText,
             }
-            setActionLog((prev) => [entry, ...prev.slice(0, 20)])
+            setActionLog(prev => [entry, ...prev.slice(0, 20)])
 
-            // Match against local action table
             const matchedAction = matchAction(commandText, ACTIONS)
 
             if (matchedAction) {
-                const { payload, topic, reply, name, id, duration_ms } = matchedAction
-                speakFeedback(reply || `Executing ${name}`)
+                speakFeedback(matchedAction.reply || `Executing ${matchedAction.name}`)
 
-                if (topic === "audio") {
-                    publishAudio(payload)
-                } else if (payload && payload.type === "preset") {
-                    playPreset(payload.preset)
-                } else if (payload && payload.type === "motion") {
-                    publishImmediate("hexapod/cmd", payload)
-                    if (id === "stop") {
-                        stopStream()
-                        setExecutingName(null)
-                        onUpdate("pose", { pose: DEFAULT_POSE })
-                    } else {
-                        playLocomotion(id, duration_ms || 3000)
-                    }
-                } else {
-                    publishImmediate("hexapod/cmd", payload)
+                if (audioStatus && audioStatus.state === "playing") {
+                    pendingActionRef.current = { action: matchedAction, joint_params: null }
+                    return
                 }
+
+                triggerAction(matchedAction)
             } else if (aiOnline) {
-                // Forward directive to Pi-Hub LLM
                 publishAi({
                     type: "text",
                     role: "user",
                     content: commandText,
                 })
-                speakFeedback("Processing directive.")
+                speakFeedback("Thinking...")
             } else {
                 speakFeedback("Command not recognized.")
             }
         },
-        [aiOnline, playPreset, playLocomotion, publishAi, publishAudio, publishImmediate, stopStream, onUpdate]
+        [aiOnline, audioStatus, publishAi, triggerAction]
     )
+
+    useEffect(() => {
+        if (!aiMessages || !aiMessages.length) return
+        const last = aiMessages[aiMessages.length - 1]
+        if (!last || !last.action_id) return
+        const key = `${aiMessages.length}|${msgKey(last)}`
+        if (lastDirectiveKeyRef.current === key) return
+        lastDirectiveKeyRef.current = key
+
+        let a = null
+        if (last.action_id === "single_joint") {
+            a = { id: "single_joint", joint_params: last.joint_params }
+        } else {
+            a = ACTIONS.find(x => x.id === last.action_id)
+        }
+        if (!a) return
+
+        if (audioStatus && audioStatus.state === "playing") {
+            pendingActionRef.current = { action: a, joint_params: last.joint_params }
+            return
+        }
+
+        triggerAction(a, last.joint_params)
+    }, [aiMessages, audioStatus, triggerAction])
+
+    useEffect(() => {
+        if (audioStatus && audioStatus.state === "idle" && pendingActionRef.current) {
+            const { action, joint_params } = pendingActionRef.current
+            pendingActionRef.current = null
+            const timer = setTimeout(() => {
+                triggerAction(action, joint_params)
+            }, 200)
+            return () => clearTimeout(timer)
+        }
+    }, [audioStatus, triggerAction])
 
     const { isListening, wakeWordState, lastTranscript, lastAcceptedCommand, micError } =
         useContinuousWakeWord({
@@ -157,7 +245,6 @@ const JudgementPanel = ({
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: "12px", width: "100%" }}>
-            {/* Top: Balanced Side-by-Side Viewport */}
             <div style={{ height: "460px", width: "100%" }}>
                 <DualStageViewport
                     camConfig={camConfig}
@@ -168,7 +255,6 @@ const JudgementPanel = ({
                 />
             </div>
 
-            {/* Bottom: 24/7 Voice & Judgement Status HUD */}
             <div className="border" style={{ padding: "12px", backgroundColor: "rgba(15, 23, 42, 0.75)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
                     <h3 style={{ margin: 0, color: "var(--c1-green)", fontSize: "0.95rem" }}>
@@ -189,7 +275,6 @@ const JudgementPanel = ({
                 )}
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", fontSize: "0.72rem" }}>
-                    {/* Live Audio & Transcript Monitor */}
                     <div style={panelBoxStyle}>
                         <div style={{ color: "#94a3b8", fontWeight: "bold", marginBottom: "4px" }}>
                             AUDIO STREAM ANALYSIS:
@@ -206,7 +291,6 @@ const JudgementPanel = ({
                         </div>
                     </div>
 
-                    {/* Filter Status Guide */}
                     <div style={panelBoxStyle}>
                         <div style={{ color: "#94a3b8", fontWeight: "bold", marginBottom: "4px" }}>
                             GATE CRITERIA:
@@ -219,14 +303,13 @@ const JudgementPanel = ({
                     </div>
                 </div>
 
-                {/* Directive Execution Log */}
                 {actionLog.length > 0 && (
                     <div style={{ marginTop: "10px" }}>
                         <div style={{ fontSize: "0.7rem", color: "#94a3b8", fontWeight: "bold", marginBottom: "4px" }}>
                             DIRECTIVE HISTORY:
                         </div>
                         <div style={historyBoxStyle}>
-                            {actionLog.map((item) => (
+                            {actionLog.map(item => (
                                 <div key={item.id} style={{ display: "flex", justifyContent: "space-between", gap: "10px" }}>
                                     <span style={{ color: "var(--c4-blue)" }}>[{item.time}]</span>
                                     <span style={{ flex: 1, color: "var(--c1-green)" }}>{item.command}</span>
@@ -282,7 +365,7 @@ const stateBadgeStyle = (state, isListening) => {
     }
 }
 
-const pulseDotStyle = (active) => ({
+const pulseDotStyle = active => ({
     width: 6,
     height: 6,
     borderRadius: "50%",
