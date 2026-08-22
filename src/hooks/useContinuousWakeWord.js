@@ -1,129 +1,183 @@
 // web-ui/src/hooks/useContinuousWakeWord.js
 import { useState, useEffect, useRef, useCallback } from "react"
+import { to16kPcm, buildWav, bytesToBase64 } from "../utils/aiAudio"
 
-// Strict wake-word regex: matches "hey spider <command>" or "hey hexapod <command>"
-const WAKE_WORD_REGEX = /^(?:hey|ok|okay|hi)\s+(?:spider|hexapod)\b[\s,.:;]*(.+)$/i
-
-// Standalone wake word (e.g. user just said "hey spider" without trailing command)
-const STANDALONE_WAKE_REGEX = /^(?:hey|ok|okay|hi)\s+(?:spider|hexapod)[\s,.:;?!]*$/i
+const WAKE_WORD_REGEX = /^(?:hey|ok|okay|hi|hello)[\s,.:;!?-]+(?:spider|hexapod)\b[\s,.:;!?-]*(.+)$/i
+const STANDALONE_WAKE_REGEX = /^(?:hey|ok|okay|hi|hello)[\s,.:;!?-]+(?:spider|hexapod)[\s,.:;!?-]*$/i
 
 export const useContinuousWakeWord = ({
     onCommand = () => {},
-    minConfidence = 0.45,
+    publishAi = () => {},
+    aiOnline = false,
+    audioStatus = null,
+    isMuted = false,
     enabled = true,
+    listenTimeoutMs = 6000,
 }) => {
     const [isListening, setIsListening] = useState(false)
-    const [wakeWordState, setWakeWordState] = useState("idle") // "idle" | "listening_prompt" | "recognized" | "ignored"
+    const [wakeWordState, setWakeWordState] = useState("idle")
     const [lastTranscript, setLastTranscript] = useState("")
     const [lastAcceptedCommand, setLastAcceptedCommand] = useState("")
     const [micError, setMicError] = useState(null)
 
-    const recognitionRef = useRef(null)
     const isMountedRef = useRef(true)
+    const myVadRef = useRef(null)
+    const isPromptActiveRef = useRef(false)
+    const promptTimerRef = useRef(null)
+
+    const isMutedRef = useRef(isMuted)
+    isMutedRef.current = isMuted
+    const audioStatusRef = useRef(audioStatus)
+    audioStatusRef.current = audioStatus
+
     const onCommandRef = useRef(onCommand)
     onCommandRef.current = onCommand
+    const publishAiRef = useRef(publishAi)
+    publishAiRef.current = publishAi
+    const aiOnlineRef = useRef(aiOnline)
+    aiOnlineRef.current = aiOnline
 
-    const processUtterance = useCallback((rawTranscript, confidence) => {
-        const trimmed = rawTranscript.trim()
+    const clearPromptTimer = () => {
+        if (promptTimerRef.current) {
+            clearTimeout(promptTimerRef.current)
+            promptTimerRef.current = null
+        }
+        isPromptActiveRef.current = false
+    }
+
+    const openListeningWindow = useCallback(() => {
+        clearPromptTimer()
+        isPromptActiveRef.current = true
+        setWakeWordState("listening_prompt")
+        promptTimerRef.current = setTimeout(() => {
+            isPromptActiveRef.current = false
+            setWakeWordState("idle")
+        }, listenTimeoutMs)
+    }, [listenTimeoutMs])
+
+    const filterAndDispatch = useCallback((rawTranscript) => {
+        // Strip leading emojis, mic icons, quotes, and symbols
+        let trimmed = rawTranscript.trim()
+        trimmed = trimmed.replace(/^[^a-zA-Z0-9]+/, "").replace(/["']+$/, "").trim()
+        
+        if (!trimmed) return false
         setLastTranscript(trimmed)
 
-        // 1. Mumble & Confidence filter: Discard low-confidence or overly brief artifacts
-        if (confidence > 0 && confidence < minConfidence) {
-            setWakeWordState("ignored")
-            return
-        }
-
-        // 2. Standalone wake word greeting ("Hey Spider")
+        // 1. Standalone Wake Word ("Hey Spider")
         if (STANDALONE_WAKE_REGEX.test(trimmed)) {
-            setWakeWordState("listening_prompt")
-            return
+            openListeningWindow()
+            return true
         }
 
-        // 3. Strict Wake Word + Directive sentence ("Hey Spider, walk forward")
+        // 2. Wake Word + Command ("Hey Spider, what's up?")
         const match = trimmed.match(WAKE_WORD_REGEX)
         if (match && match[1]) {
             const extractedCommand = match[1].trim()
-            // Ensure the command is not just mumbling or single meaningless characters
             if (extractedCommand.length >= 2) {
+                clearPromptTimer()
                 setWakeWordState("recognized")
                 setLastAcceptedCommand(extractedCommand)
                 onCommandRef.current(extractedCommand, trimmed)
-                return
+                return true
             }
         }
 
-        // 4. Background chatter or speech not addressed to the hexapod
-        setWakeWordState("ignored")
-    }, [minConfidence])
+        // 3. Command inside active listening window
+        if (isPromptActiveRef.current) {
+            clearPromptTimer()
+            setWakeWordState("recognized")
+            setLastAcceptedCommand(trimmed)
+            onCommandRef.current(trimmed, trimmed)
+            return true
+        }
 
+        // 4. Dropped ambient chatter
+        setWakeWordState("ignored")
+        return false
+    }, [openListeningWindow])
     useEffect(() => {
         isMountedRef.current = true
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
 
-        if (!SpeechRecognition) {
-            setMicError("Speech recognition is not supported in this browser. Please use Chrome or Edge.")
-            return undefined
-        }
-
-        const recognition = new SpeechRecognition()
-        recognition.continuous = true
-        recognition.interimResults = false
-        recognition.lang = "en-US"
-        recognition.maxAlternatives = 1
-        recognitionRef.current = recognition
-
-        recognition.onstart = () => {
-            if (isMountedRef.current) {
-                setIsListening(true)
-                setMicError(null)
+        const initVAD = async () => {
+            if (!window.vad) {
+                await new Promise((resolve) => setTimeout(resolve, 500))
             }
-        }
-
-        recognition.onresult = (event) => {
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-                if (event.results[i].isFinal) {
-                    const transcript = event.results[i][0].transcript
-                    const confidence = event.results[i][0].confidence || 1.0
-                    processUtterance(transcript, confidence)
-                }
+            if (!window.vad) {
+                setMicError("AI Voice engine failed to load from CDN. Check network.")
+                return
             }
-        }
 
-        recognition.onerror = (event) => {
-            if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-                setMicError("Microphone permission denied. Enable microphone access to use 24/7 voice.")
-                setIsListening(false)
-            }
-        }
-
-        // Resilient auto-restart loop for 24/7 continuous listening
-        recognition.onend = () => {
-            if (isMountedRef.current && enabled) {
-                try {
-                    recognition.start()
-                } catch (e) {
-                    // Ignore restart race errors
-                }
-            } else if (isMountedRef.current) {
-                setIsListening(false)
-            }
-        }
-
-        if (enabled) {
             try {
-                recognition.start()
-            } catch (e) {
-                console.warn("[WakeWord] Error starting recognition:", e)
+                const myvad = await window.vad.MicVAD.new({
+                    // Explicit CDN asset paths for v0.0.29 / ONNX 1.22.0
+                    baseAssetPath: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/",
+                    onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/",
+                    
+                    positiveSpeechThreshold: 0.65,
+                    minSpeechFrames: 4,
+                    preSpeechPadFrames: 5,
+
+                    onSpeechEnd: (audio) => {
+                        const isEspPlaying = audioStatusRef.current && audioStatusRef.current.state === "playing"
+                        if (isMutedRef.current || isEspPlaying) {
+                            return
+                        }
+
+                        // audio is a clean 16kHz Float32Array
+                        const pcm = to16kPcm(audio, 16000)
+                        const wav = buildWav(pcm, 16000)
+                        const b64 = bytesToBase64(wav)
+
+                        if (aiOnlineRef.current) {
+                            publishAiRef.current({
+                                type: "audio",
+                                role: "user",
+                                content: b64,
+                                sample_rate_hz: 16000,
+                                is_sentinel: true,
+                            })
+                        }
+                    },
+                })
+
+                myVadRef.current = myvad
+
+                if (enabled && isMountedRef.current) {
+                    myvad.start()
+                    setIsListening(true)
+                    setMicError(null)
+                }
+            } catch (err) {
+                console.error("[Silero VAD] Init error:", err)
+                if (isMountedRef.current) {
+                    setMicError("AI Microphone failed to initialize.")
+                    setIsListening(false)
+                }
             }
         }
+
+        initVAD()
 
         return () => {
             isMountedRef.current = false
-            try {
-                recognition.stop()
-            } catch (e) {}
+            clearPromptTimer()
+            if (myVadRef.current) {
+                myVadRef.current.destroy()
+                myVadRef.current = null
+            }
         }
-    }, [enabled, processUtterance])
+    }, [])
+
+    useEffect(() => {
+        if (!myVadRef.current) return
+        if (enabled) {
+            myVadRef.current.start()
+            setIsListening(true)
+        } else {
+            myVadRef.current.pause()
+            setIsListening(false)
+        }
+    }, [enabled])
 
     return {
         isListening,
@@ -131,5 +185,6 @@ export const useContinuousWakeWord = ({
         lastTranscript,
         lastAcceptedCommand,
         micError,
+        filterAndDispatch,
     }
 }
