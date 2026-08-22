@@ -1,3 +1,4 @@
+// web-ui/src/components/pages/index.js
 import ForwardKinematicsPage from "./ForwardKinematicsPage"
 import InverseKinematicsPage from "./InverseKinematicsPage"
 import LandingPage from "./LandingPage"
@@ -7,9 +8,7 @@ import CameraPanel from "./CameraPanel"
 import SensorPanel from "./SensorPanel"
 import AudioPanel from "./AudioPanel"
 import AIPanel from "./AIPanel"
-import PresetsPage from "./PresetsPage"
 import JudgementPanel from "./JudgementPanel"
-
 
 export {
     ForwardKinematicsPage,
@@ -21,6 +20,5 @@ export {
     SensorPanel,
     AudioPanel,
     AIPanel,
-    PresetsPage,
     JudgementPanel, 
 }

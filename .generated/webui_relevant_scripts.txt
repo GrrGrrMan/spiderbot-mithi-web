@@ -1,6 +1,6 @@
 # Web-UI Relevant Scripts Collection
 # Generated from: D:\Projects\hexapod-workspaces\V2\web-ui
-# Total files: 121
+# Total files: 128
 #
 
 ================================================================================
@@ -473,7 +473,6 @@ import {
     SensorPanel,
     AudioPanel,
     AIPanel,
-    PresetsPage,
     JudgementPanel,
 } from "./components/pages"
 
@@ -513,9 +512,12 @@ const Page = ({ pageComponent }) => (
         <Route path={PATHS.ai.path} exact>
             {pageComponent(AIPanel)}
         </Route>
-        <Route path={PATHS.presets.path} exact>
-            {pageComponent(PresetsPage)}
-        </Route>
+        {/* Redirect old Presets tab to the AI Assistant panel */}
+        {PATHS.presets && (
+            <Route path={PATHS.presets.path} exact>
+                <Redirect to={PATHS.ai.path} />
+            </Route>
+        )}
         <Route path={PATHS.judgement.path} exact>
             {pageComponent(JudgementPanel)}
         </Route>
@@ -922,6 +924,471 @@ const NavDetailed = () => (
 const Nav = ({ isConnected }) => <NavBullets isConnected={isConnected} />
 
 export { Nav, NavDetailed }
+
+================================================================================
+# FILE: src\components\ai\AiActionGrid.js
+================================================================================
+
+// web-ui/src/components/ai/AiActionGrid.js
+import React from "react"
+
+export const AiActionGrid = ({ actions, activeExecutingAction, onExecuteAction, onStopAll }) => {
+    // 1. Dynamic Categorization (Future-Proof against schema additions)
+    const movementActions = actions.filter(a => 
+        ["walk_forward", "walk_backward", "turn_left", "turn_right", "spin", "stop"].includes(a.id)
+    )
+    const gestureActions = actions.filter(a => 
+        a.payload?.type === "sequence" || a.payload?.type === "preset" || a.id.startsWith("preset_")
+    )
+    const audioActions = actions.filter(a => a.topic === "audio" || a.payload?.action)
+    const systemActions = actions.filter(a => ["freeze", "wake"].includes(a.id) || a.payload?.type === "system")
+
+    return (
+        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            {/* Locomotion */}
+            <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                    <span style={{ fontSize: "0.7rem", fontWeight: "bold", color: "#94a3b8" }}>
+                        🚶 LOCOMOTION & GAITS (3D Animated)
+                    </span>
+                    {activeExecutingAction && (
+                        <button
+                            type="button"
+                            onClick={onStopAll}
+                            style={{ ...btnStyle, padding: "2px 8px", fontSize: "0.65rem", borderColor: "var(--c6-red)", color: "var(--c6-red)" }}
+                        >
+                            ⏹ Emergency Stop
+                        </button>
+                    )}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                    {movementActions.map(a => {
+                        const isRunning = activeExecutingAction === a.name || activeExecutingAction === a.id
+                        return (
+                            <button
+                                key={a.id}
+                                type="button"
+                                onClick={() => onExecuteAction(a)}
+                                style={{
+                                    ...btnStyle,
+                                    borderColor: isRunning ? "var(--c1-green)" : "rgba(41, 128, 185, 0.5)",
+                                    background: isRunning ? "rgba(50, 255, 126, 0.15)" : btnStyle.background,
+                                    color: isRunning ? "var(--c1-green)" : btnStyle.color,
+                                }}
+                            >
+                                {a.name}
+                            </button>
+                        )
+                    })}
+                </div>
+            </div>
+
+            {/* Dynamic Gestures & Sequences */}
+            <div>
+                <div style={{ fontSize: "0.7rem", fontWeight: "bold", color: "#94a3b8", marginBottom: "4px" }}>
+                    🎭 DYNAMIC GESTURE SEQUENCES (60FPS Interpolated)
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                    {gestureActions.map(a => {
+                        const isRunning = activeExecutingAction === a.payload?.name || activeExecutingAction === a.payload?.preset || activeExecutingAction === a.name
+                        return (
+                            <button
+                                key={a.id}
+                                type="button"
+                                onClick={() => onExecuteAction(a)}
+                                style={{
+                                    ...btnStyle,
+                                    borderColor: isRunning ? "var(--c1-green)" : "rgba(41, 128, 185, 0.5)",
+                                    background: isRunning ? "rgba(50, 255, 126, 0.15)" : btnStyle.background,
+                                    color: isRunning ? "var(--c1-green)" : btnStyle.color,
+                                }}
+                            >
+                                {a.name}
+                            </button>
+                        )
+                    })}
+                </div>
+            </div>
+
+            {/* Audio & System */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                <div>
+                    <div style={{ fontSize: "0.7rem", fontWeight: "bold", color: "#94a3b8", marginBottom: "4px" }}>
+                        🔊 ACOUSTIC TONES
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                        {audioActions.map(a => (
+                            <button key={a.id} type="button" onClick={() => onExecuteAction(a)} style={btnStyle}>
+                                {a.name}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <div>
+                    <div style={{ fontSize: "0.7rem", fontWeight: "bold", color: "#94a3b8", marginBottom: "4px" }}>
+                        ⚡ SYSTEM POWER
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                        {systemActions.map(a => (
+                            <button
+                                key={a.id}
+                                type="button"
+                                onClick={() => onExecuteAction(a)}
+                                style={{
+                                    ...btnStyle,
+                                    borderColor: a.id === "freeze" ? "var(--c6-red)" : "var(--c1-green)",
+                                    color: a.id === "freeze" ? "var(--c6-red)" : "var(--c1-green)",
+                                }}
+                            >
+                                {a.name}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            </div>
+        </div>
+    )
+}
+
+const btnStyle = {
+    padding: "5px 9px",
+    borderRadius: "5px",
+    border: "1px solid rgba(41, 128, 185, 0.5)",
+    background: "rgba(23, 33, 43, 0.85)",
+    color: "#e2e8f0",
+    cursor: "pointer",
+    fontSize: "0.72rem",
+    fontWeight: "500",
+}
+
+================================================================================
+# FILE: src\components\ai\AiChatTerminal.js
+================================================================================
+
+// web-ui/src/components/ai/AiChatTerminal.js
+import React, { useEffect, useRef } from "react"
+
+export const AiChatTerminal = ({ messages = [] }) => {
+    const chatRef = useRef(null)
+
+    useEffect(() => {
+        if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
+    }, [messages])
+
+    return (
+        <div
+            ref={chatRef}
+            style={{
+                height: 170,
+                overflowY: "auto",
+                border: "1px solid rgba(41, 128, 185, 0.4)",
+                borderRadius: "6px",
+                padding: "8px",
+                marginBottom: "8px",
+                background: "rgba(10, 15, 25, 0.7)",
+            }}
+        >
+            {messages.length === 0 && (
+                <div style={{ textAlign: "center", paddingTop: 55, color: "#64748b", fontSize: "0.75rem" }}>
+                    Click any action button below or press "Talk" to record a command.
+                </div>
+            )}
+            {messages.map((m, i) => {
+                const isUser = m.role === "user"
+                const isSystem = m.role === "system"
+                const bubbleBg = isUser ? "rgba(50, 255, 126, 0.2)" : isSystem ? "rgba(255, 33, 33, 0.15)" : "rgba(41, 128, 185, 0.5)"
+                const textColor = isUser ? "var(--c1-green)" : isSystem ? "#fca5a5" : "#fff"
+
+                return (
+                    <div key={i} style={{ textAlign: isUser ? "right" : "left", marginBottom: 6 }}>
+                        <span
+                            style={{
+                                display: "inline-block",
+                                maxWidth: "85%",
+                                padding: "5px 10px",
+                                borderRadius: "8px",
+                                background: bubbleBg,
+                                border: `1px solid ${isUser ? "rgba(50, 255, 126, 0.4)" : isSystem ? "rgba(255, 33, 33, 0.4)" : "rgba(41, 128, 185, 0.4)"}`,
+                                color: textColor,
+                                fontSize: "0.75rem",
+                                wordBreak: "break-word",
+                                whiteSpace: "pre-wrap",
+                                textAlign: "left",
+                            }}
+                        >
+                            {m.content}
+                        </span>
+                    </div>
+                )
+            })}
+        </div>
+    )
+}
+
+================================================================================
+# FILE: src\components\ai\AiInputControls.js
+================================================================================
+
+// web-ui/src/components/ai/AiInputControls.js
+import React from "react"
+
+export const AiInputControls = ({ input, setInput, onSend, recording, onToggleMic, micBlocked, aiOnline }) => (
+    <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
+        <input
+            type="text"
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && onSend()}
+            placeholder={aiOnline ? "Ask AI assistant anything…" : "Type a direct command (e.g., 'walk forward')…"}
+            style={{
+                flex: 1,
+                padding: "6px 10px",
+                borderRadius: "6px",
+                border: "1px solid rgba(41, 128, 185, 0.5)",
+                background: "rgba(10, 15, 25, 0.8)",
+                color: "#fff",
+                height: "2.2rem",
+            }}
+            aria-label="AI input"
+        />
+        <button
+            type="button"
+            onClick={onSend}
+            style={{ ...btnStyle, background: "var(--c4-blue)", color: "#fff", height: "2.2rem" }}
+            disabled={!input.trim()}
+        >
+            Send
+        </button>
+        <button
+            type="button"
+            onClick={onToggleMic}
+            style={{
+                ...btnStyle,
+                background: recording ? "var(--c6-red)" : "rgba(23, 33, 43, 0.9)",
+                color: recording ? "#fff" : "var(--c1-green)",
+                height: "2.2rem",
+                minWidth: "75px",
+            }}
+            disabled={micBlocked}
+            title={micBlocked ? "Microphone unavailable" : recording ? "Stop and send recording" : "Record voice query"}
+        >
+            {recording ? "⏹ Stop" : "🎤 Talk"}
+        </button>
+    </div>
+)
+
+const btnStyle = {
+    padding: "5px 9px",
+    borderRadius: "5px",
+    border: "1px solid rgba(41, 128, 185, 0.5)",
+    background: "rgba(23, 33, 43, 0.85)",
+    color: "#e2e8f0",
+    cursor: "pointer",
+    fontSize: "0.72rem",
+    fontWeight: "500",
+}
+
+================================================================================
+# FILE: src\components\ai\AiStatusBar.js
+================================================================================
+
+// web-ui/src/components/ai/AiStatusBar.js
+import React from "react"
+
+export const AiStatusBar = ({ aiOnline, aiStatus, audioStatus, isConnected }) => (
+    <div
+        style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "12px",
+            alignItems: "center",
+            padding: "6px 10px",
+            borderRadius: "6px",
+            background: aiOnline ? "rgba(50, 255, 126, 0.1)" : "rgba(255, 33, 33, 0.1)",
+            border: `1px solid ${aiOnline ? "rgba(50, 255, 126, 0.3)" : "rgba(255, 33, 33, 0.3)"}`,
+            fontSize: "0.72rem",
+            marginBottom: "10px",
+        }}
+    >
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", fontWeight: "bold" }}>
+            <span
+                style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: !aiOnline ? "var(--c6-red)" : aiStatus?.state === "busy" ? "#fbbf24" : "var(--c1-green)",
+                    display: "inline-block",
+                }}
+            />
+            {aiOnline
+                ? (aiStatus?.state === "busy" ? "AI Service: Processing / Speaking" : "AI Service: Online")
+                : "AI Service: Offline (Direct Hardware Mode)"}
+        </span>
+
+        <span style={{ color: "#94a3b8" }}>
+            {aiStatus?.llm ? `LLM: ${aiStatus.llm.provider}:${aiStatus.llm.model || "ready"}` : "LLM: Offline"}
+        </span>
+
+        <span style={{ color: audioStatus?.state === "playing" ? "var(--c2-pink)" : "#94a3b8" }}>
+            {audioStatus?.state === "playing" ? "🔊 S3 Speaker: Playing" : "🔊 S3 Speaker: Idle"}
+        </span>
+
+        {!isConnected && (
+            <span style={{ color: "var(--c6-red)", fontWeight: "bold" }}>
+                ⚠️ MQTT Disconnected
+            </span>
+        )}
+    </div>
+)
+
+================================================================================
+# FILE: src\components\ai\SentinelStatusCard.js
+================================================================================
+
+// web-ui/src/components/ai/SentinelStatusCard.js
+import React from "react"
+
+export const SentinelStatusCard = ({
+    wakeWordState,
+    isListening,
+    micError,
+    lastTranscript,
+    lastAcceptedCommand,
+    actionLog = [],
+}) => (
+    <div className="border" style={{ padding: "12px", backgroundColor: "rgba(15, 23, 42, 0.75)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+            <h3 style={{ margin: 0, color: "var(--c1-green)", fontSize: "0.95rem" }}>
+                24/7 PASSIVE WAKE-WORD SENTINEL
+            </h3>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <span style={stateBadgeStyle(wakeWordState, isListening)}>
+                    <span style={pulseDotStyle(isListening)} />
+                    {getStatusLabel(wakeWordState, isListening)}
+                </span>
+            </div>
+        </div>
+
+        {micError && (
+            <div style={{ color: "var(--c6-red)", fontSize: "0.75rem", marginBottom: "8px" }}>
+                ⚠️ {micError}
+            </div>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", fontSize: "0.72rem" }}>
+            <div style={panelBoxStyle}>
+                <div style={{ color: "#94a3b8", fontWeight: "bold", marginBottom: "4px" }}>
+                    AUDIO STREAM ANALYSIS:
+                </div>
+                <div style={{ marginBottom: "4px" }}>
+                    <strong>Heard Raw:</strong>{" "}
+                    <span style={{ color: "#cbd5e1" }}>{lastTranscript || "(Waiting for speech...)"}</span>
+                </div>
+                <div>
+                    <strong>Active Command:</strong>{" "}
+                    <span style={{ color: "var(--c1-green)", fontWeight: "bold" }}>
+                        {lastAcceptedCommand || "None (Filter Active)"}
+                    </span>
+                </div>
+            </div>
+
+            <div style={panelBoxStyle}>
+                <div style={{ color: "#94a3b8", fontWeight: "bold", marginBottom: "4px" }}>
+                    GATE CRITERIA:
+                </div>
+                <div style={{ color: "#94a3b8" }}>
+                    • Responds <strong>ONLY</strong> to <code>"Hey Spider &lt;action&gt;"</code> or <code>"Hey Hexapod &lt;action&gt;"</code>.
+                    <br />
+                    • Ambient speech, mumbling, and unrelated background sounds are automatically dropped.
+                </div>
+            </div>
+        </div>
+
+        {actionLog.length > 0 && (
+            <div style={{ marginTop: "10px" }}>
+                <div style={{ fontSize: "0.7rem", color: "#94a3b8", fontWeight: "bold", marginBottom: "4px" }}>
+                    DIRECTIVE HISTORY:
+                </div>
+                <div style={historyBoxStyle}>
+                    {actionLog.map(item => (
+                        <div key={item.id} style={{ display: "flex", justifyContent: "space-between", gap: "10px" }}>
+                            <span style={{ color: "var(--c4-blue)" }}>[{item.time}]</span>
+                            <span style={{ flex: 1, color: "var(--c1-green)" }}>{item.command}</span>
+                            <span style={{ color: "#64748b", fontSize: "0.65rem" }}>"{item.full}"</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        )}
+    </div>
+)
+
+const getStatusLabel = (state, isListening) => {
+    if (!isListening) return "MIC OFFLINE"
+    if (state === "recognized") return "WAKE WORD TRIGGERED"
+    if (state === "listening_prompt") return "HEARD WAKE WORD — AWAITING DIRECTIVE"
+    if (state === "ignored") return "AMBIENT CHATTER DROPPED"
+    return "24/7 LISTENING ('Hey Spider...')"
+}
+
+const stateBadgeStyle = (state, isListening) => {
+    let bg = "rgba(50, 255, 126, 0.15)"
+    let border = "var(--c1-green)"
+    let color = "var(--c1-green)"
+
+    if (!isListening) {
+        bg = "rgba(255, 33, 33, 0.15)"
+        border = "var(--c6-red)"
+        color = "var(--c6-red)"
+    } else if (state === "recognized") {
+        bg = "rgba(252, 66, 123, 0.25)"
+        border = "var(--c2-pink)"
+        color = "var(--c2-pink)"
+    } else if (state === "ignored") {
+        bg = "rgba(100, 116, 139, 0.2)"
+        border = "#64748b"
+        color = "#94a3b8"
+    }
+
+    return {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        padding: "3px 10px",
+        borderRadius: "12px",
+        backgroundColor: bg,
+        border: `1px solid ${border}`,
+        color: color,
+        fontSize: "0.68rem",
+        fontWeight: "bold",
+    }
+}
+
+const pulseDotStyle = active => ({
+    width: 6,
+    height: 6,
+    borderRadius: "50%",
+    backgroundColor: active ? "var(--c1-green)" : "var(--c6-red)",
+    display: "inline-block",
+})
+
+const panelBoxStyle = {
+    padding: "8px",
+    borderRadius: "6px",
+    backgroundColor: "rgba(10, 15, 25, 0.7)",
+    border: "1px solid rgba(41, 128, 185, 0.3)",
+}
+
+const historyBoxStyle = {
+    maxHeight: "90px",
+    overflowY: "auto",
+    padding: "6px",
+    borderRadius: "4px",
+    backgroundColor: "rgba(0, 0, 0, 0.4)",
+    fontSize: "0.68rem",
+    fontFamily: "monospace",
+}
 
 ================================================================================
 # FILE: src\components\camera\CameraView.js
@@ -2591,18 +3058,16 @@ export default RandomRobotGif
 import React, { useState, useEffect, useRef, useCallback } from "react"
 import AI_ACTIONS from "../../constants/aiActions.json"
 import { SECTION_NAMES } from "../vars"
-import { buildWav, to16kPcm, bytesToBase64, VOICE_PROCESSOR_CODE } from "../../utils/aiAudio"
 import { matchAction } from "../../utils/aiActionMatcher"
-import { DEFAULT_POSE, DEFAULT_DIMENSIONS } from "../../templates"
-import { buildServoBatchPayload } from "../../utils/servoMapper"
-import { generatePresetFramesAsync, generateLocomotionFrames } from "../../hexapod/solvers/motionSynthesizer"
-import { usePoseFrameStream } from "../../hooks/usePoseFrameStream"
+import { useVoiceRecorder } from "../../hooks/useVoiceRecorder"
+import { useAiMotionExecutor } from "../../hooks/useAiMotionExecutor"
+import { AiStatusBar } from "../ai/AiStatusBar"
+import { AiChatTerminal } from "../ai/AiChatTerminal"
+import { AiInputControls } from "../ai/AiInputControls"
+import { AiActionGrid } from "../ai/AiActionGrid"
 
 const ACTIONS = AI_ACTIONS.actions
-const SILENCE_RMS = 0.02
-const MAX_SLICE_MS = 2500
-
-const msgKey = m => `${m.role}|${m.type}|${m.content}`
+const msgKey = m => `${m.role}|${m.type}|${m.content || m.action_id || ""}`
 
 const AIPanel = ({
     publishImmediate = () => {},
@@ -2620,322 +3085,39 @@ const AIPanel = ({
 }) => {
     const [messages, setMessages] = useState([])
     const [input, setInput] = useState("")
-    const [recording, setRecording] = useState(false)
-    const [micBlocked, setMicBlocked] = useState(false)
-    const [activeFrames, setActiveFrames] = useState([])
-    const [activeExecutingAction, setActiveExecutingAction] = useState(null)
-
-    const chatRef = useRef(null)
-    const recordingRef = useRef({})
     const lastDirectiveKeyRef = useRef(null)
-    const activeReqIdRef = useRef(0)
-    const pendingDirectiveRef = useRef(null)
-
-    const audioChunksRef = useRef([])
-    const audioSampleRateRef = useRef(48000)
 
     const aiOnline = Boolean(aiStatus && aiStatus.state !== "offline" && aiStatus.state !== "error")
 
-    const publishLivePose = useCallback(
-        pose => {
-            if (pose && typeof pose === "object") {
-                publishImmediate("hexapod/cmd", buildServoBatchPayload(pose))
-            }
-        },
-        [publishImmediate]
-    )
+    // 1. Motion & Kinematics Executor
+    const { activeExecutingAction, triggerAction, stopAll } = useAiMotionExecutor({
+        params,
+        publishImmediate,
+        publishAudio,
+        onUpdate,
+    })
 
-    const { stop: stopStream } = usePoseFrameStream(
-        activeFrames,
-        pose => {
-            if (activeExecutingAction && !["walk_forward", "walk_backward", "turn_left", "turn_right", "spin"].includes(activeExecutingAction)) {
-                publishLivePose(pose)
-            }
-        },
-        {
-            onComplete: () => {
-                setActiveExecutingAction(null)
-            },
-        }
-    )
-
-    const playPreset = useCallback(
-        presetName => {
-            if (!presetName) return
-            stopStream()
-            setActiveExecutingAction(presetName)
-            const reqId = ++activeReqIdRef.current
-            const dims = (params && params.dimensions) || DEFAULT_DIMENSIONS
-            const startPose = (params && params.pose) || DEFAULT_POSE
-
-            generatePresetFramesAsync(presetName, dims, 3, startPose, 30).then(frames => {
-                if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
-                    setActiveFrames(frames)
-                }
-            })
-        },
-        [params, stopStream]
-    )
-
-    const playLocomotion = useCallback(
-        (actionId, durationMs = 3000) => {
-            stopStream()
-            setActiveExecutingAction(actionId)
-            const reqId = ++activeReqIdRef.current
-            const dims = (params && params.dimensions) || DEFAULT_DIMENSIONS
-            const startPose = (params && params.pose) || DEFAULT_POSE
-
-            generateLocomotionFrames(actionId, dims, durationMs, startPose).then(frames => {
-                if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
-                    setActiveFrames(frames)
-                }
-            })
-        },
-        [params, stopStream]
-    )
-
-    // Single-Joint Stand Articulation Handler
-    const handleSingleJoint = useCallback(
-        jointParams => {
-            if (!jointParams || !jointParams.leg) return
-            const { leg, joint, angle = 0, mode = "relative" } = jointParams
-            const jointMap = { coxa: "alpha", coxia: "alpha", femur: "beta", tibia: "gamma" }
-            const angleParam = jointMap[joint] || joint
-
-            const currentPose = (params && params.pose) || DEFAULT_POSE
-            const currentAngle = (currentPose[leg] && currentPose[leg][angleParam]) || 0
-
-            let targetAngle = mode === "relative" ? currentAngle + angle : angle
-
-            // Safety boundary clamps for presentation stand
-            if (angleParam === "alpha") targetAngle = Math.max(-40, Math.min(40, targetAngle))
-            if (angleParam === "beta") targetAngle = Math.max(-80, Math.min(80, targetAngle))
-            if (angleParam === "gamma") targetAngle = Math.max(-90, Math.min(90, targetAngle))
-
-            const newPose = {
-                ...currentPose,
-                [leg]: {
-                    ...currentPose[leg],
-                    [angleParam]: targetAngle,
-                },
-            }
-
-            setActiveExecutingAction(`FK: ${leg} ${joint}`)
-            onUpdate("pose", { pose: newPose })
-            publishImmediate("hexapod/cmd", buildServoBatchPayload(newPose))
-        },
-        [params, onUpdate, publishImmediate]
-    )
-
-    const triggerAction = useCallback(
-        (action, jointParams = null) => {
-            if (!action && !jointParams) return
-
-            if (action === "single_joint" || (action && action.id === "single_joint")) {
-                handleSingleJoint(jointParams || (action && action.joint_params))
-                return
-            }
-
-            const { payload, topic, duration_ms, name, id } = action
-
-            if (topic === "audio") {
-                publishAudio(payload)
-            } else if (payload && payload.type === "preset") {
-                setActiveExecutingAction(name)
-                playPreset(payload.preset)
-            } else if (payload && payload.type === "motion") {
-                setActiveExecutingAction(name)
-                publishImmediate("hexapod/cmd", payload)
-                if (id === "stop") {
-                    stopStream()
-                    setActiveExecutingAction(null)
-                    onUpdate("pose", { pose: DEFAULT_POSE })
-                } else {
-                    playLocomotion(id, duration_ms || 3000)
-                    if (duration_ms > 0) {
-                        setTimeout(() => {
-                            publishImmediate("hexapod/cmd", { ...payload, vx: 0, vy: 0, omega: 0 })
-                        }, duration_ms)
-                    }
-                }
-            } else {
-                setActiveExecutingAction(name)
-                publishImmediate("hexapod/cmd", payload)
-            }
-        },
-        [publishAudio, publishImmediate, playPreset, playLocomotion, stopStream, onUpdate, handleSingleJoint]
-    )
-
-    useEffect(() => {
-        onMount(SECTION_NAMES.ai)
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
-
-    useEffect(() => {
-        if (!aiMessages || !aiMessages.length) return
-        setMessages(prev => {
-            const seen = new Set(prev.map(msgKey))
-            const added = aiMessages
-                .filter(m => m.type !== "audio" && typeof m.content === "string" && m.content.length < 1000)
-                .filter(m => !seen.has(msgKey(m)))
-            return added.length ? [...prev, ...added] : prev
-        })
-    }, [aiMessages])
-
-    // ── Helper: Robust Action Resolver for LLM Directives & Aliases ──────────────
-    const resolveAction = useCallback((msg, actionsList) => {
-        if (!msg) return null
-        const actionId = msg.action_id || msg.action
-
-        // 1. Single-Joint Stand Articulation
-        if (actionId === "single_joint" || msg.joint_params) {
-            return { id: "single_joint", joint_params: msg.joint_params }
-        }
-
-        // 2. Direct ID or Name Match
-        if (actionId) {
-            let found = actionsList.find(x => x.id === actionId || x.id.toLowerCase() === String(actionId).toLowerCase())
-            if (found) return found
-
-            found = actionsList.find(x => x.name.toLowerCase() === String(actionId).toLowerCase())
-            if (found) return found
-
-            found = matchAction(String(actionId), actionsList)
-            if (found) return found
-        }
-
-        // 3. Fallback: Parse intent directly from LLM conversational text
-        if (msg.content && typeof msg.content === "string") {
-            const found = matchAction(msg.content, actionsList)
-            if (found) return found
-        }
-
-        return null
-    }, [])
-
-    // ── 1. Watch for assistant directives arriving from RPi ──────────────────────
-    useEffect(() => {
-        if (!aiMessages || !aiMessages.length) return
-        const last = aiMessages[aiMessages.length - 1]
-        if (!last) return
-
-        const key = `${aiMessages.length}|${msgKey(last)}`
-        if (lastDirectiveKeyRef.current === key) return
-        lastDirectiveKeyRef.current = key
-
-        const a = resolveAction(last, ACTIONS)
-        if (!a) return
-
-        const hasSpokenContent = last.role === "assistant" && typeof last.content === "string" && last.content.trim().length > 0
-        const isAudioActive = audioStatus && audioStatus.state === "playing"
-
-        // Queue action until S3 finishes speaking
-        if (hasSpokenContent || isAudioActive) {
-            console.log(`[AIPanel] Queuing action '${a.name || a.id}' until TTS speech finishes...`)
-            pendingDirectiveRef.current = { 
-                action: a, 
-                joint_params: last.joint_params,
-                hasStartedAudio: isAudioActive,
-                queuedAt: Date.now()
-            }
-            return
-        }
-
-        // Direct action without speech -> execute immediately
-        triggerAction(a, last.joint_params)
-    }, [aiMessages, audioStatus, triggerAction, resolveAction])
-
-    // ── 2. Track when audio officially starts playing on S3 ─────────────────────
-    useEffect(() => {
-        if (audioStatus && audioStatus.state === "playing" && pendingDirectiveRef.current) {
-            pendingDirectiveRef.current.hasStartedAudio = true
-        }
-    }, [audioStatus])
-
-    // ── 3. Safely fire queued actions once S3 speaker turns idle ────────────────
-    useEffect(() => {
-        if (!pendingDirectiveRef.current) return
-
-        const canExecute = (audioStatus && audioStatus.state === "idle" && pendingDirectiveRef.current.hasStartedAudio) ||
-                           (Date.now() - pendingDirectiveRef.current.queuedAt > 6000)
-
-        if (canExecute) {
-            const { action, joint_params } = pendingDirectiveRef.current
-            pendingDirectiveRef.current = null
-            console.log(`[AIPanel] TTS complete! Executing queued action: ${action.name || action.id}`)
-            const timer = setTimeout(() => {
-                triggerAction(action, joint_params)
-            }, 150)
-            return () => clearTimeout(timer)
-        }
-    }, [audioStatus, triggerAction])
-
-    useEffect(() => {
-        if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
-    }, [messages])
     const push = useCallback((role, content, type = "text") => {
         setMessages(prev => [...prev, { role, type, content, ts: Date.now() }])
     }, [])
 
-    const clearChat = useCallback(() => {
-        setMessages([])
-        clearAiMessages()
-    }, [clearAiMessages])
-
-    const executeAction = useCallback(
-        action => {
-            const { reply, name } = action
-            triggerAction(action)
-            push("assistant", reply || `Triggered action: ${name}`)
-        },
-        [triggerAction, push]
-    )
-
     const getCleanHistory = useCallback(() => {
         return messages
-            .filter(m => (m.role === "user" || m.role === "assistant") && m.type !== "audio")
-            .filter(m => typeof m.content === "string" && !m.content.startsWith("UklGR") && m.content.length < 500)
+            .filter(m => (m.role === "user" || m.role === "assistant") && m.type !== "audio" && m.type !== "directive")
+            .filter(m => typeof m.content === "string" && !m.content.startsWith("UklGR") && !m.content.startsWith("🎤 Voice Query") && m.content.length < 500)
             .slice(-10)
             .map(m => ({ role: m.role, content: m.content }))
     }, [messages])
 
-    const handleSend = useCallback(() => {
-        const text = input.trim()
-        if (!text) return
-        push("user", text, "text")
-        setInput("")
-
-        if (aiOnline) {
-            publishAi({
-                type: "text",
-                role: "user",
-                content: text,
-                history: getCleanHistory(),
-            })
-            return
-        }
-
-        const action = matchAction(text, ACTIONS)
-        if (action) {
-            executeAction(action)
-        } else {
-            push("system", "AI Service Offline: No LLM connected on hexapod/" + aiDeviceId + "/ai.")
-        }
-    }, [input, aiOnline, publishAi, push, executeAction, getCleanHistory, aiDeviceId])
-
-    const handleAudioSlice = useCallback(
-        (samples, sampleRate) => {
-            const pcm = to16kPcm(samples, sampleRate)
-            const wav = buildWav(pcm, 16000)
-            const b64 = bytesToBase64(wav)
-
-            push("user", `🎤 Voice Query (${Math.round(wav.length / 32)}ms audio)...`, "text")
-
+    // 2. Voice Recorder Hook
+    const handleAudioRecorded = useCallback(
+        ({ base64Wav, durationMs }) => {
+            push("user", `🎤 Voice Query (${durationMs}ms audio)`)
             if (aiOnline) {
                 publishAi({
                     type: "audio",
                     role: "user",
-                    content: b64,
+                    content: base64Wav,
                     sample_rate_hz: 16000,
                     history: getCleanHistory(),
                 })
@@ -2946,121 +3128,104 @@ const AIPanel = ({
         [push, aiOnline, publishAi, getCleanHistory]
     )
 
-    const finalizeAudioRecording = useCallback(() => {
-        const chunks = audioChunksRef.current
-        audioChunksRef.current = []
+    const { recording, micBlocked, startMic, stopMic } = useVoiceRecorder({
+        onAudioRecorded: handleAudioRecorded,
+    })
 
-        if (!chunks || chunks.length === 0) return
-
-        const totalLen = chunks.reduce((acc, c) => acc + c.length, 0)
-        if (totalLen === 0) return
-
-        const joined = new Float32Array(totalLen)
-        let offset = 0
-        for (let i = 0; i < chunks.length; i++) {
-            joined.set(chunks[i], offset)
-            offset += chunks[i].length
+    // Helper: Action Resolver for Directives & Aliases
+    const resolveAction = useCallback((msg, actionsList) => {
+        if (!msg) return null
+        if (msg.action_id === "single_joint" || msg.action === "single_joint" || msg.joint_params) {
+            return { id: "single_joint", joint_params: msg.joint_params }
         }
 
-        const sampleRate = audioSampleRateRef.current || 48000
-        const pcm = to16kPcm(joined, sampleRate)
-        const wav = buildWav(pcm, 16000)
-        const b64 = bytesToBase64(wav)
-        const totalDurationMs = Math.round((pcm.length / 16000) * 1000)
+        const actionId = msg.action_id || msg.action || (msg.type === "directive" ? msg.preset : null)
+        if (!actionId) return null
 
-        if (totalDurationMs < 200) return
+        const rawStr = String(actionId).trim()
+        let found = actionsList.find(x => x.id.toLowerCase() === rawStr.toLowerCase())
+        if (found) return found
 
-        push("user", `🎤 Voice Query (${totalDurationMs}ms audio)`)
+        found = actionsList.find(x => x.payload?.preset?.toLowerCase() === rawStr.toLowerCase())
+        if (found) return found
 
-        if (aiOnline) {
-            const history = messages
-                .filter(m => m.role === "user" || m.role === "assistant")
-                .slice(-50)
-                .map(m => ({ role: m.role, content: m.content }))
-            publishAi({ type: "audio", role: "user", content: b64, sample_rate_hz: 16000, history })
-        } else {
-            push("system", "AI Service Offline: Voice transcription and LLM reasoning require the Pi-Hub service. Action buttons below remain active.")
-        }
-    }, [push, aiOnline, publishAi, messages])
+        found = actionsList.find(x => x.name.toLowerCase() === rawStr.toLowerCase())
+        if (found) return found
 
-    const startMic = useCallback(async () => {
-        try {
-            audioChunksRef.current = []
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: { echoCancellation: true, noiseSuppression: true },
-            })
-            const AudioCtx = window.AudioContext || window.webkitAudioContext
-            const ctx = new AudioCtx()
-            const source = ctx.createMediaStreamSource(stream)
-
-            const blob = new Blob([VOICE_PROCESSOR_CODE], { type: "application/javascript" })
-            const workletUrl = URL.createObjectURL(blob)
-            await ctx.audioWorklet.addModule(workletUrl)
-            URL.revokeObjectURL(workletUrl)
-
-            const workletNode = new AudioWorkletNode(ctx, "voice-capture-processor", {
-                processorOptions: {
-                    sampleRate: ctx.sampleRate || 48000,
-                    silenceRms: SILENCE_RMS,
-                    maxSliceMs: MAX_SLICE_MS,
-                },
-            })
-
-            workletNode.port.onmessage = e => {
-                if (e.data && e.data.type === "audio_slice") {
-                    if (e.data.samples && e.data.samples.length > 0) {
-                        audioChunksRef.current.push(e.data.samples)
-                        audioSampleRateRef.current = e.data.sampleRate || 48000
-                    }
-                }
+        const normalized = rawStr.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]/g, " ").toLowerCase()
+        found = actionsList.find(x => {
+            if (x.id.replace(/[_-]/g, " ").toLowerCase() === normalized) return true
+            if (x.name.toLowerCase() === normalized) return true
+            if (Array.isArray(x.keywords) && x.keywords.some(kw => kw.toLowerCase() === normalized || normalized.includes(kw.toLowerCase()))) {
+                return true
             }
+            return false
+        })
+        if (found) return found
 
-            source.connect(workletNode)
-            recordingRef.current = { ctx, stream, workletNode }
-            setRecording(true)
-            setMicBlocked(false)
-        } catch (err) {
-            console.error("[AIPanel] Mic error:", err)
-            setMicBlocked(true)
-        }
+        return matchAction(rawStr, actionsList)
     }, [])
 
-    const stopMic = useCallback(() => {
-        const rec = recordingRef.current
-        if (rec.workletNode) {
-            try {
-                rec.workletNode.port.postMessage({ command: "flush" })
-            } catch (e) {}
-
-            setTimeout(() => {
-                if (rec.workletNode) rec.workletNode.disconnect()
-                if (rec.stream) rec.stream.getTracks().forEach(t => t.stop())
-                if (rec.ctx) rec.ctx.close().catch(() => {})
-                recordingRef.current = {}
-                setRecording(false)
-                finalizeAudioRecording()
-            }, 40)
-        } else {
-            recordingRef.current = {}
-            setRecording(false)
-            finalizeAudioRecording()
+    // 3. Directive Listener (Pi-Hub orchestration)
+    useEffect(() => {
+        if (!aiMessages || !aiMessages.length) return
+        const last = aiMessages[aiMessages.length - 1]
+        if (!last || (last.type !== "directive" && !last.action_id && !last.action && !last.joint_params)) {
+            return
         }
-    }, [finalizeAudioRecording])
 
-    const stopAll = () => {
-        stopStream()
-        activeReqIdRef.current++
-        pendingDirectiveRef.current = null
-        setActiveExecutingAction(null)
-        setActiveFrames([])
-        publishImmediate("hexapod/cmd", { type: "motion", vx: 0, vy: 0, omega: 0 })
-        onUpdate("pose", { pose: DEFAULT_POSE })
-    }
+        const key = `${aiMessages.length}|${msgKey(last)}`
+        if (lastDirectiveKeyRef.current === key) return
+        lastDirectiveKeyRef.current = key
 
-    const movementActions = ACTIONS.filter(a => ["walk_forward", "walk_backward", "turn_left", "turn_right", "spin", "stop"].includes(a.id))
-    const presetActions = ACTIONS.filter(a => a.payload && a.payload.type === "preset")
-    const audioActions = ACTIONS.filter(a => a.topic === "audio")
-    const systemActions = ACTIONS.filter(a => ["freeze", "wake"].includes(a.id))
+        const a = resolveAction(last, ACTIONS)
+        if (a) triggerAction(a, last.joint_params)
+    }, [aiMessages, triggerAction, resolveAction])
+
+    // 4. Message Sync to Chat
+    useEffect(() => {
+        if (!aiMessages || !aiMessages.length) return
+        setMessages(prev => {
+            const seen = new Set(prev.map(msgKey))
+            const added = aiMessages
+                .filter(m => m.type !== "audio" && m.type !== "directive" && typeof m.content === "string" && m.content.length < 1000)
+                .filter(m => !seen.has(msgKey(m)))
+            return added.length ? [...prev, ...added] : prev
+        })
+    }, [aiMessages])
+
+    useEffect(() => {
+        onMount(SECTION_NAMES.ai)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
+
+    const handleSend = useCallback(() => {
+        const text = input.trim()
+        if (!text) return
+        push("user", text, "text")
+        setInput("")
+
+        if (aiOnline) {
+            publishAi({ type: "text", role: "user", content: text, history: getCleanHistory() })
+            return
+        }
+
+        const action = matchAction(text, ACTIONS)
+        if (action) {
+            triggerAction(action)
+            push("assistant", action.reply || `Triggered action: ${action.name}`)
+        } else {
+            push("system", `AI Service Offline: No LLM connected on hexapod/${aiDeviceId}/ai.`)
+        }
+    }, [input, aiOnline, publishAi, push, triggerAction, getCleanHistory, aiDeviceId])
+
+    const handleExecuteAction = useCallback(
+        action => {
+            triggerAction(action)
+            push("assistant", action.reply || `Triggered action: ${action.name}`)
+        },
+        [triggerAction, push]
+    )
 
     return (
         <div className="border" style={{ margin: "10px", padding: "12px", background: "rgba(15, 23, 42, 0.65)" }}>
@@ -3089,8 +3254,8 @@ const AIPanel = ({
                     )}
                     <button
                         type="button"
-                        onClick={clearChat}
-                        style={{ ...btnStyle, padding: "2px 8px", fontSize: "0.65rem" }}
+                        onClick={() => { setMessages([]); clearAiMessages() }}
+                        style={{ padding: "2px 8px", fontSize: "0.65rem", cursor: "pointer", background: "rgba(23, 33, 43, 0.85)", color: "#e2e8f0", border: "1px solid rgba(41, 128, 185, 0.5)", borderRadius: "5px" }}
                         disabled={messages.length === 0}
                     >
                         Clear Chat
@@ -3098,277 +3263,25 @@ const AIPanel = ({
                 </div>
             </div>
 
-            {/* Health Status Bar */}
-            <div
-                style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: "12px",
-                    alignItems: "center",
-                    padding: "6px 10px",
-                    borderRadius: "6px",
-                    background: aiOnline ? "rgba(50, 255, 126, 0.1)" : "rgba(255, 33, 33, 0.1)",
-                    border: `1px solid ${aiOnline ? "rgba(50, 255, 126, 0.3)" : "rgba(255, 33, 33, 0.3)"}`,
-                    fontSize: "0.72rem",
-                    marginBottom: "10px",
-                }}
-            >
-                <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", fontWeight: "bold" }}>
-                    <span
-                        style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: "50%",
-                            background: aiOnline ? "var(--c1-green)" : "var(--c6-red)",
-                            display: "inline-block",
-                        }}
-                    />
-                    {aiOnline ? "AI Service: Online" : "AI Service: Offline (Direct Hardware Mode)"}
-                </span>
-
-                <span style={{ color: "#94a3b8" }}>
-                    {aiStatus && aiStatus.llm ? `LLM: ${aiStatus.llm.provider}:${aiStatus.llm.model}` : "LLM: Offline"}
-                </span>
-
-                <span style={{ color: audioStatus && audioStatus.state === "playing" ? "var(--c2-pink)" : "#94a3b8" }}>
-                    {audioStatus && audioStatus.state === "playing" ? "🔊 S3 Speaker: Playing" : "🔊 S3 Speaker: Idle"}
-                </span>
-
-                {!isConnected && (
-                    <span style={{ color: "var(--c6-red)", fontWeight: "bold" }}>
-                        ⚠️ MQTT Disconnected
-                    </span>
-                )}
-            </div>
-
-            {/* Conversation Terminal */}
-            <div
-                ref={chatRef}
-                style={{
-                    height: 170,
-                    overflowY: "auto",
-                    border: "1px solid rgba(41, 128, 185, 0.4)",
-                    borderRadius: "6px",
-                    padding: "8px",
-                    marginBottom: "8px",
-                    background: "rgba(10, 15, 25, 0.7)",
-                }}
-            >
-                {messages.length === 0 && (
-                    <div style={{ textAlign: "center", paddingTop: 55, color: "#64748b", fontSize: "0.75rem" }}>
-                        Click any action button below or hold/press "Talk" to record a command.
-                    </div>
-                )}
-                {messages.map((m, i) => {
-                    const isUser = m.role === "user"
-                    const isSystem = m.role === "system"
-                    let bubbleBg = "rgba(41, 128, 185, 0.5)"
-                    let textColor = "#fff"
-
-                    if (isUser) {
-                        bubbleBg = "rgba(50, 255, 126, 0.2)"
-                        textColor = "var(--c1-green)"
-                    } else if (isSystem) {
-                        bubbleBg = "rgba(255, 33, 33, 0.15)"
-                        textColor = "#fca5a5"
-                    }
-
-                    return (
-                        <div key={i} style={{ textAlign: isUser ? "right" : "left", marginBottom: 6 }}>
-                            <span
-                                style={{
-                                    display: "inline-block",
-                                    maxWidth: "85%",
-                                    padding: "5px 10px",
-                                    borderRadius: "8px",
-                                    background: bubbleBg,
-                                    border: `1px solid ${isUser ? "rgba(50, 255, 126, 0.4)" : isSystem ? "rgba(255, 33, 33, 0.4)" : "rgba(41, 128, 185, 0.4)"}`,
-                                    color: textColor,
-                                    fontSize: "0.75rem",
-                                    wordBreak: "break-word",
-                                    whiteSpace: "pre-wrap",
-                                    textAlign: "left",
-                                }}
-                            >
-                                {m.content}
-                            </span>
-                        </div>
-                    )
-                })}
-            </div>
-
-            {/* Input & Record Controls */}
-            <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
-                <input
-                    type="text"
-                    value={input}
-                    onChange={e => setInput(e.target.value)}
-                    onKeyDown={e => e.key === "Enter" && handleSend()}
-                    placeholder={aiOnline ? "Ask AI assistant anything…" : "Type a direct command (e.g., 'walk forward')…"}
-                    style={{
-                        flex: 1,
-                        padding: "6px 10px",
-                        borderRadius: "6px",
-                        border: "1px solid rgba(41, 128, 185, 0.5)",
-                        background: "rgba(10, 15, 25, 0.8)",
-                        color: "#fff",
-                        height: "2.2rem",
-                    }}
-                    aria-label="AI input"
-                />
-                <button
-                    type="button"
-                    onClick={handleSend}
-                    style={{ ...btnStyle, background: "var(--c4-blue)", color: "#fff", height: "2.2rem" }}
-                    disabled={!input.trim()}
-                >
-                    Send
-                </button>
-                <button
-                    type="button"
-                    onClick={recording ? stopMic : startMic}
-                    style={{
-                        ...btnStyle,
-                        background: recording ? "var(--c6-red)" : "rgba(23, 33, 43, 0.9)",
-                        color: recording ? "#fff" : "var(--c1-green)",
-                        height: "2.2rem",
-                        minWidth: "75px",
-                    }}
-                    disabled={micBlocked}
-                    title={micBlocked ? "Microphone unavailable" : recording ? "Stop and send recording" : "Record voice query"}
-                >
-                    {recording ? "⏹ Stop" : "🎤 Talk"}
-                </button>
-            </div>
-
-            {/* Categorized Direct Action Matrix */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {/* 1. Locomotion */}
-                <div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                        <span style={{ fontSize: "0.7rem", fontWeight: "bold", color: "#94a3b8" }}>
-                            🚶 LOCOMOTION & GAITS (3D Animated)
-                        </span>
-                        {activeExecutingAction && (
-                            <button
-                                type="button"
-                                onClick={stopAll}
-                                style={{ ...btnStyle, padding: "2px 8px", fontSize: "0.65rem", borderColor: "var(--c6-red)", color: "var(--c6-red)" }}
-                            >
-                                ⏹ Emergency Stop
-                            </button>
-                        )}
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                        {movementActions.map(a => {
-                            const isRunning = activeExecutingAction === a.name || activeExecutingAction === a.id
-                            return (
-                                <button
-                                    key={a.id}
-                                    type="button"
-                                    onClick={() => executeAction(a)}
-                                    style={{
-                                        ...btnStyle,
-                                        borderColor: isRunning ? "var(--c1-green)" : "rgba(41, 128, 185, 0.5)",
-                                        background: isRunning ? "rgba(50, 255, 126, 0.15)" : btnStyle.background,
-                                        color: isRunning ? "var(--c1-green)" : btnStyle.color,
-                                    }}
-                                    aria-label={a.name}
-                                >
-                                    {a.name}
-                                </button>
-                            )
-                        })}
-                    </div>
-                </div>
-
-                {/* 2. Gestures */}
-                <div>
-                    <div style={{ fontSize: "0.7rem", fontWeight: "bold", color: "#94a3b8", marginBottom: "4px" }}>
-                        🎭 DYNAMIC GESTURE PRESETS (60FPS Interpolated)
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                        {presetActions.map(a => {
-                            const isRunning = activeExecutingAction === (a.payload && a.payload.preset)
-                            return (
-                                <button
-                                    key={a.id}
-                                    type="button"
-                                    onClick={() => executeAction(a)}
-                                    style={{
-                                        ...btnStyle,
-                                        borderColor: isRunning ? "var(--c1-green)" : "rgba(41, 128, 185, 0.5)",
-                                        background: isRunning ? "rgba(50, 255, 126, 0.15)" : btnStyle.background,
-                                        color: isRunning ? "var(--c1-green)" : btnStyle.color,
-                                    }}
-                                    aria-label={a.name}
-                                >
-                                    {a.name}
-                                </button>
-                            )
-                        })}
-                    </div>
-                </div>
-
-                {/* 3. Audio & System */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                    <div>
-                        <div style={{ fontSize: "0.7rem", fontWeight: "bold", color: "#94a3b8", marginBottom: "4px" }}>
-                            🔊 ACOUSTIC TONES
-                        </div>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                            {audioActions.map(a => (
-                                <button
-                                    key={a.id}
-                                    type="button"
-                                    onClick={() => executeAction(a)}
-                                    style={btnStyle}
-                                    aria-label={a.name}
-                                >
-                                    {a.name}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div>
-                        <div style={{ fontSize: "0.7rem", fontWeight: "bold", color: "#94a3b8", marginBottom: "4px" }}>
-                            ⚡ SYSTEM POWER
-                        </div>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                            {systemActions.map(a => (
-                                <button
-                                    key={a.id}
-                                    type="button"
-                                    onClick={() => executeAction(a)}
-                                    style={{
-                                        ...btnStyle,
-                                        borderColor: a.id === "freeze" ? "var(--c6-red)" : "var(--c1-green)",
-                                        color: a.id === "freeze" ? "var(--c6-red)" : "var(--c1-green)",
-                                    }}
-                                    aria-label={a.name}
-                                >
-                                    {a.name}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            </div>
+            <AiStatusBar aiOnline={aiOnline} aiStatus={aiStatus} audioStatus={audioStatus} isConnected={isConnected} />
+            <AiChatTerminal messages={messages} />
+            <AiInputControls
+                input={input}
+                setInput={setInput}
+                onSend={handleSend}
+                recording={recording}
+                onToggleMic={recording ? stopMic : startMic}
+                micBlocked={micBlocked}
+                aiOnline={aiOnline}
+            />
+            <AiActionGrid
+                actions={ACTIONS}
+                activeExecutingAction={activeExecutingAction}
+                onExecuteAction={handleExecuteAction}
+                onStopAll={stopAll}
+            />
         </div>
     )
-}
-
-const btnStyle = {
-    padding: "5px 9px",
-    borderRadius: "5px",
-    border: "1px solid rgba(41, 128, 185, 0.5)",
-    background: "rgba(23, 33, 43, 0.85)",
-    color: "#e2e8f0",
-    cursor: "pointer",
-    fontSize: "0.72rem",
-    fontWeight: "500",
-    transition: "all 0.15s ease",
 }
 
 export default AIPanel
@@ -3593,16 +3506,15 @@ export default InverseKinematicsPage
 import React, { useState, useEffect, useCallback, useRef } from "react"
 import { SECTION_NAMES } from "../vars"
 import { useContinuousWakeWord } from "../../hooks/useContinuousWakeWord"
+import { useAiMotionExecutor } from "../../hooks/useAiMotionExecutor"
+import { resolveAction } from "../../utils/aiActionResolver"
 import DualStageViewport from "../camera/DualStageViewport"
+import { SentinelStatusCard } from "../ai/SentinelStatusCard"
 import { matchAction } from "../../utils/aiActionMatcher"
 import AI_ACTIONS from "../../constants/aiActions.json"
-import { DEFAULT_POSE, DEFAULT_DIMENSIONS } from "../../templates"
-import { buildServoBatchPayload } from "../../utils/servoMapper"
-import { generatePresetFramesAsync, generateLocomotionFrames } from "../../hexapod/solvers/motionSynthesizer"
-import { usePoseFrameStream } from "../../hooks/usePoseFrameStream"
 
 const ACTIONS = AI_ACTIONS.actions
-const msgKey = m => `${m.role}|${m.type}|${m.content}`
+const msgKey = m => `${m.role}|${m.type}|${m.content || m.action_id || m.action || ""}`
 
 const JudgementPanel = ({
     publishImmediate = () => {},
@@ -3621,16 +3533,20 @@ const JudgementPanel = ({
     onMount = () => {},
 }) => {
     const [actionLog, setActionLog] = useState([])
-    const [activeFrames, setActiveFrames] = useState([])
-    const [executingName, setExecutingName] = useState(null)
-    const activeReqIdRef = useRef(0)
-    const pendingActionRef = useRef(null)
     const lastDirectiveKeyRef = useRef(null)
     const lastProcessedMsgRef = useRef(null)
 
     const aiOnline = Boolean(aiStatus && aiStatus.state !== "offline" && aiStatus.state !== "error")
 
-    const speakFeedback = text => {
+    // 1. Shared Kinematics & Motion Executor
+    const { triggerAction } = useAiMotionExecutor({
+        params,
+        publishImmediate,
+        publishAudio,
+        onUpdate,
+    })
+
+    const speakFeedback = useCallback(text => {
         if (!aiOnline && "speechSynthesis" in window) {
             window.speechSynthesis.cancel()
             const utterance = new SpeechSynthesisUtterance(text)
@@ -3638,147 +3554,9 @@ const JudgementPanel = ({
             utterance.pitch = 1.0
             window.speechSynthesis.speak(utterance)
         }
-    }
+    }, [aiOnline])
 
-    const resolveAction = useCallback((msg, actionsList) => {
-        if (!msg) return null
-        const actionId = msg.action_id || msg.action
-
-        if (actionId === "single_joint" || msg.joint_params) {
-            return { id: "single_joint", joint_params: msg.joint_params }
-        }
-
-        if (actionId) {
-            let found = actionsList.find(x => x.id === actionId || x.id.toLowerCase() === String(actionId).toLowerCase())
-            if (found) return found
-
-            found = actionsList.find(x => x.name.toLowerCase() === String(actionId).toLowerCase())
-            if (found) return found
-
-            found = matchAction(String(actionId), actionsList)
-            if (found) return found
-        }
-
-        if (msg.content && typeof msg.content === "string") {
-            const found = matchAction(msg.content, actionsList)
-            if (found) return found
-        }
-
-        return null
-    }, [])
-
-    const publishLivePose = useCallback(
-        pose => {
-            if (pose && typeof pose === "object") {
-                publishImmediate("hexapod/cmd", buildServoBatchPayload(pose))
-            }
-        },
-        [publishImmediate]
-    )
-
-    const { stop: stopStream } = usePoseFrameStream(activeFrames, pose => {
-        if (executingName && !["walk_forward", "walk_backward", "turn_left", "turn_right", "spin"].includes(executingName)) {
-            publishLivePose(pose)
-        }
-    })
-
-    const playPreset = useCallback(
-        presetName => {
-            if (!presetName) return
-            stopStream()
-            setExecutingName(presetName)
-            const reqId = ++activeReqIdRef.current
-            const dims = (params && params.dimensions) || DEFAULT_DIMENSIONS
-            const startPose = (params && params.pose) || DEFAULT_POSE
-
-            generatePresetFramesAsync(presetName, dims, 3, startPose, 30).then(frames => {
-                if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
-                    setActiveFrames(frames)
-                }
-            })
-        },
-        [params, stopStream]
-    )
-
-    const playLocomotion = useCallback(
-        (actionId, durationMs = 3000) => {
-            stopStream()
-            setExecutingName(actionId)
-            const reqId = ++activeReqIdRef.current
-            const dims = (params && params.dimensions) || DEFAULT_DIMENSIONS
-            const startPose = (params && params.pose) || DEFAULT_POSE
-
-            generateLocomotionFrames(actionId, dims, durationMs, startPose).then(frames => {
-                if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
-                    setActiveFrames(frames)
-                }
-            })
-        },
-        [params, stopStream]
-    )
-
-    const handleSingleJoint = useCallback(
-        jointParams => {
-            if (!jointParams || !jointParams.leg) return
-            const { leg, joint, angle = 0, mode = "relative" } = jointParams
-            const jointMap = { coxa: "alpha", coxia: "alpha", femur: "beta", tibia: "gamma" }
-            const angleParam = jointMap[joint] || joint
-
-            const currentPose = (params && params.pose) || DEFAULT_POSE
-            const currentAngle = (currentPose[leg] && currentPose[leg][angleParam]) || 0
-
-            let targetAngle = mode === "relative" ? currentAngle + angle : angle
-
-            if (angleParam === "alpha") targetAngle = Math.max(-40, Math.min(40, targetAngle))
-            if (angleParam === "beta") targetAngle = Math.max(-80, Math.min(80, targetAngle))
-            if (angleParam === "gamma") targetAngle = Math.max(-90, Math.min(90, targetAngle))
-
-            const newPose = {
-                ...currentPose,
-                [leg]: {
-                    ...currentPose[leg],
-                    [angleParam]: targetAngle,
-                },
-            }
-
-            setExecutingName(`FK: ${leg} ${joint}`)
-            onUpdate("pose", { pose: newPose })
-            publishImmediate("hexapod/cmd", buildServoBatchPayload(newPose))
-        },
-        [params, onUpdate, publishImmediate]
-    )
-
-    const triggerAction = useCallback(
-        (matchedAction, jointParams = null) => {
-            if (!matchedAction && !jointParams) return
-
-            if (matchedAction === "single_joint" || (matchedAction && matchedAction.id === "single_joint")) {
-                handleSingleJoint(jointParams || (matchedAction && matchedAction.joint_params))
-                return
-            }
-
-            const { payload, topic, name, id, duration_ms } = matchedAction
-            if (topic === "audio") {
-                publishAudio(payload)
-            } else if (payload && payload.type === "preset") {
-                playPreset(payload.preset)
-            } else if (payload && payload.type === "motion") {
-                publishImmediate("hexapod/cmd", payload)
-                if (id === "stop") {
-                    stopStream()
-                    setExecutingName(null)
-                    onUpdate("pose", { pose: DEFAULT_POSE })
-                } else {
-                    playLocomotion(id, duration_ms || 3000)
-                }
-            } else {
-                publishImmediate("hexapod/cmd", payload)
-            }
-        },
-        [publishAudio, playPreset, publishImmediate, stopStream, onUpdate, playLocomotion, handleSingleJoint]
-    )
-
-    // ── 24/7 Wake-Word Voice Command Handler ────────────────────────────────────
+    // 2. 24/7 Wake-Word Voice Command Handler
     const handleVoiceCommand = useCallback(
         (commandText, fullUtterance) => {
             const entry = {
@@ -3789,21 +3567,8 @@ const JudgementPanel = ({
             }
             setActionLog(prev => [entry, ...prev.slice(0, 20)])
 
-            const matchedAction = matchAction(commandText, ACTIONS)
-
-            // When AI is online: Route through RPi Groq LLM + Piper TTS (Robot Speaker)
+            // Online: Route to Pi-Hub (Pi-Hub pipeline manages intent, LLM ordering, and timing)
             if (aiOnline) {
-                if (matchedAction) {
-                    console.log(`[JudgementPanel] Pre-queuing voice action '${matchedAction.name}'...`)
-                    pendingActionRef.current = {
-                        action: matchedAction,
-                        joint_params: null,
-                        hasStartedAudio: (audioStatus && audioStatus.state === "playing"),
-                        queuedAt: Date.now(),
-                    }
-                }
-                
-                // Forward speech query to RPi
                 publishAi({
                     type: "text",
                     role: "user",
@@ -3812,7 +3577,8 @@ const JudgementPanel = ({
                 return
             }
 
-            // Fallback: Offline mode (No RPi connected)
+            // Offline Fallback
+            const matchedAction = matchAction(commandText, ACTIONS)
             if (matchedAction) {
                 speakFeedback(matchedAction.reply || `Executing ${matchedAction.name}`)
                 triggerAction(matchedAction)
@@ -3820,65 +3586,27 @@ const JudgementPanel = ({
                 speakFeedback("Command not recognized.")
             }
         },
-        [aiOnline, audioStatus, publishAi, triggerAction]
+        [aiOnline, publishAi, triggerAction, speakFeedback]
     )
 
-    // ── 1. Watch for assistant directives arriving from RPi ──────────────────────
+    // 3. Watch for assistant directives arriving from RPi
+    // Pi-Hub pipeline authoritatively manages timing; JudgementPanel executes directives immediately.
     useEffect(() => {
         if (!aiMessages || !aiMessages.length) return
         const last = aiMessages[aiMessages.length - 1]
-        if (!last) return
+        if (!last || (last.type !== "directive" && !last.action_id && !last.action && !last.joint_params)) {
+            return
+        }
 
         const key = `${aiMessages.length}|${msgKey(last)}`
         if (lastDirectiveKeyRef.current === key) return
         lastDirectiveKeyRef.current = key
 
         const a = resolveAction(last, ACTIONS)
-        if (!a) return
+        if (a) triggerAction(a, last.joint_params)
+    }, [aiMessages, triggerAction])
 
-        const hasSpokenContent = last.role === "assistant" && typeof last.content === "string" && last.content.trim().length > 0
-        const isAudioActive = audioStatus && audioStatus.state === "playing"
-
-        if (hasSpokenContent || isAudioActive) {
-            console.log(`[JudgementPanel] Queuing directive '${a.name || a.id}' until TTS speech finishes...`)
-            pendingActionRef.current = { 
-                action: a, 
-                joint_params: last.joint_params,
-                hasStartedAudio: isAudioActive,
-                queuedAt: Date.now()
-            }
-            return
-        }
-
-        triggerAction(a, last.joint_params)
-    }, [aiMessages, audioStatus, triggerAction, resolveAction])
-
-    // ── 2. Track when audio officially starts playing on S3 ─────────────────────
-    useEffect(() => {
-        if (audioStatus && audioStatus.state === "playing" && pendingActionRef.current) {
-            pendingActionRef.current.hasStartedAudio = true
-        }
-    }, [audioStatus])
-
-    // ── 3. Execute queued action ONLY after S3 speaker finishes playing ──────────
-    useEffect(() => {
-        if (!pendingActionRef.current) return
-
-        const canExecute = (audioStatus && audioStatus.state === "idle" && pendingActionRef.current.hasStartedAudio) ||
-                           (Date.now() - pendingActionRef.current.queuedAt > 6000)
-
-        if (canExecute) {
-            const { action, joint_params } = pendingActionRef.current
-            pendingActionRef.current = null
-            console.log(`[JudgementPanel] TTS complete! Executing queued action: ${action.name || action.id}`)
-            const timer = setTimeout(() => {
-                triggerAction(action, joint_params)
-            }, 150)
-            return () => clearTimeout(timer)
-        }
-    }, [audioStatus, triggerAction])
-
-    // Initialize the continuous wake-word sentinel
+    // 4. Initialize continuous wake-word sentinel
     const { isListening, wakeWordState, lastTranscript, lastAcceptedCommand, micError, filterAndDispatch } =
         useContinuousWakeWord({
             onCommand: handleVoiceCommand,
@@ -3888,7 +3616,7 @@ const JudgementPanel = ({
             enabled: true,
         })
 
-    // Bridge incoming RPi Whisper STT transcriptions to the wake-word sentinel
+    // 5. Bridge incoming RPi Whisper STT transcriptions to the wake-word sentinel
     useEffect(() => {
         if (!aiMessages || !aiMessages.length) return
         const lastMsg = aiMessages[aiMessages.length - 1]
@@ -3908,6 +3636,7 @@ const JudgementPanel = ({
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: "12px", width: "100%" }}>
+            {/* Camera & 3D Telemetry Canvas */}
             <div style={{ height: "460px", width: "100%" }}>
                 <DualStageViewport
                     camConfig={camConfig}
@@ -3918,139 +3647,17 @@ const JudgementPanel = ({
                 />
             </div>
 
-            <div className="border" style={{ padding: "12px", backgroundColor: "rgba(15, 23, 42, 0.75)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                    <h3 style={{ margin: 0, color: "var(--c1-green)", fontSize: "0.95rem" }}>
-                        24/7 PASSIVE WAKE-WORD SENTINEL
-                    </h3>
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                        <span style={stateBadgeStyle(wakeWordState, isListening)}>
-                            <span style={pulseDotStyle(isListening)} />
-                            {getStatusLabel(wakeWordState, isListening)}
-                        </span>
-                    </div>
-                </div>
-
-                {micError && (
-                    <div style={{ color: "var(--c6-red)", fontSize: "0.75rem", marginBottom: "8px" }}>
-                        ⚠️ {micError}
-                    </div>
-                )}
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", fontSize: "0.72rem" }}>
-                    <div style={panelBoxStyle}>
-                        <div style={{ color: "#94a3b8", fontWeight: "bold", marginBottom: "4px" }}>
-                            AUDIO STREAM ANALYSIS:
-                        </div>
-                        <div style={{ marginBottom: "4px" }}>
-                            <strong>Heard Raw:</strong>{" "}
-                            <span style={{ color: "#cbd5e1" }}>{lastTranscript || "(Waiting for speech...)"}</span>
-                        </div>
-                        <div>
-                            <strong>Active Command:</strong>{" "}
-                            <span style={{ color: "var(--c1-green)", fontWeight: "bold" }}>
-                                {lastAcceptedCommand || "None (Filter Active)"}
-                            </span>
-                        </div>
-                    </div>
-
-                    <div style={panelBoxStyle}>
-                        <div style={{ color: "#94a3b8", fontWeight: "bold", marginBottom: "4px" }}>
-                            GATE CRITERIA:
-                        </div>
-                        <div style={{ color: "#94a3b8" }}>
-                            • Responds <strong>ONLY</strong> to <code>"Hey Spider &lt;action&gt;"</code> or <code>"Hey Hexapod &lt;action&gt;"</code>.
-                            <br />
-                            • Ambient speech, mumbling, and unrelated background sounds are automatically dropped.
-                        </div>
-                    </div>
-                </div>
-
-                {actionLog.length > 0 && (
-                    <div style={{ marginTop: "10px" }}>
-                        <div style={{ fontSize: "0.7rem", color: "#94a3b8", fontWeight: "bold", marginBottom: "4px" }}>
-                            DIRECTIVE HISTORY:
-                        </div>
-                        <div style={historyBoxStyle}>
-                            {actionLog.map(item => (
-                                <div key={item.id} style={{ display: "flex", justifyContent: "space-between", gap: "10px" }}>
-                                    <span style={{ color: "var(--c4-blue)" }}>[{item.time}]</span>
-                                    <span style={{ flex: 1, color: "var(--c1-green)" }}>{item.command}</span>
-                                    <span style={{ color: "#64748b", fontSize: "0.65rem" }}>"{item.full}"</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-            </div>
+            {/* 24/7 Passive Wake-Word Sentinel Status & History */}
+            <SentinelStatusCard
+                wakeWordState={wakeWordState}
+                isListening={isListening}
+                micError={micError}
+                lastTranscript={lastTranscript}
+                lastAcceptedCommand={lastAcceptedCommand}
+                actionLog={actionLog}
+            />
         </div>
     )
-}
-
-const getStatusLabel = (state, isListening) => {
-    if (!isListening) return "MIC OFFLINE"
-    if (state === "recognized") return "WAKE WORD TRIGGERED"
-    if (state === "listening_prompt") return "HEARD WAKE WORD — AWAITING DIRECTIVE"
-    if (state === "ignored") return "AMBIENT CHATTER DROPPED"
-    return "24/7 LISTENING ('Hey Spider...')"
-}
-
-const stateBadgeStyle = (state, isListening) => {
-    let bg = "rgba(50, 255, 126, 0.15)"
-    let border = "var(--c1-green)"
-    let color = "var(--c1-green)"
-
-    if (!isListening) {
-        bg = "rgba(255, 33, 33, 0.15)"
-        border = "var(--c6-red)"
-        color = "var(--c6-red)"
-    } else if (state === "recognized") {
-        bg = "rgba(252, 66, 123, 0.25)"
-        border = "var(--c2-pink)"
-        color = "var(--c2-pink)"
-    } else if (state === "ignored") {
-        bg = "rgba(100, 116, 139, 0.2)"
-        border = "#64748b"
-        color = "#94a3b8"
-    }
-
-    return {
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "6px",
-        padding: "3px 10px",
-        borderRadius: "12px",
-        backgroundColor: bg,
-        border: `1px solid ${border}`,
-        color: color,
-        fontSize: "0.68rem",
-        fontWeight: "bold",
-    }
-}
-
-const pulseDotStyle = active => ({
-    width: 6,
-    height: 6,
-    borderRadius: "50%",
-    backgroundColor: active ? "var(--c1-green)" : "var(--c6-red)",
-    display: "inline-block",
-})
-
-const panelBoxStyle = {
-    padding: "8px",
-    borderRadius: "6px",
-    backgroundColor: "rgba(10, 15, 25, 0.7)",
-    border: "1px solid rgba(41, 128, 185, 0.3)",
-}
-
-const historyBoxStyle = {
-    maxHeight: "90px",
-    overflowY: "auto",
-    padding: "6px",
-    borderRadius: "4px",
-    backgroundColor: "rgba(0, 0, 0, 0.4)",
-    fontSize: "0.68rem",
-    fontFamily: "monospace",
 }
 
 export default JudgementPanel
@@ -4160,173 +3767,6 @@ class LegPatternPage extends Component {
 }
 
 export default LegPatternPage
-
-================================================================================
-# FILE: src\components\pages\PresetsPage.js
-================================================================================
-
-// web-ui/src/components/pages/PresetsPage.js
-import React, { useState, useCallback, useEffect, useRef } from "react"
-import { SECTION_NAMES } from "../vars"
-import { DEFAULT_POSE, DEFAULT_DIMENSIONS } from "../../templates"
-import { generatePresetFramesAsync } from "../../hexapod/solvers/motionSynthesizer"
-import { buildServoBatchPayload } from "../../utils/servoMapper"
-import { usePoseFrameStream } from "../../hooks/usePoseFrameStream"
-
-const PRESETS = [
-    { name: "wave", label: "Wave", category: "Greeting", icon: "🌊", desc: "Single front leg wave" },
-    { name: "cheer", label: "Cheer", category: "Greeting", icon: "🎉", desc: "Dual front leg celebration" },
-    { name: "lookAround", label: "Look Around", category: "Survey", icon: "🔭", desc: "3D Torso orientation sweep" },
-    { name: "stretch", label: "Stretch", category: "Agility", icon: "🤸", desc: "Multi-axis full stance limbering" },
-    { name: "pushups", label: "Push-ups", category: "Agility", icon: "💪", desc: "Vertical body dips" },
-    { name: "bow", label: "Bow", category: "Social", icon: "🙇", desc: "Formal forward pitch bow" },
-    { name: "dance", label: "Dance", category: "Social", icon: "💃", desc: "Rhythmic sway and body roll" },
-    { name: "standUp", label: "Stand Tall", category: "Stance", icon: "🧍", desc: "Maximum height stance" },
-    { name: "sitDown", label: "Sit Down", category: "Stance", icon: "🧎", desc: "Low clearance stance" },
-]
-
-const PresetsPage = ({
-    onMount = () => {},
-    onUpdate = () => {},
-    publishThrottled = () => {},
-    params = {},
-}) => {
-    const dimensions = (params && params.dimensions) || DEFAULT_DIMENSIONS
-    const startPose = (params && params.pose) || DEFAULT_POSE
-    const [frames, setFrames] = useState([])
-    const [activePreset, setActivePreset] = useState(null)
-    const activeReqIdRef = useRef(0)
-
-    useEffect(() => {
-        onMount(SECTION_NAMES.presets)
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
-
-    const publishPose = useCallback(
-        pose => {
-            if (pose && typeof pose === "object") {
-                publishThrottled("hexapod/cmd", buildServoBatchPayload(pose))
-            }
-        },
-        [publishThrottled]
-    )
-
-    const { stop } = usePoseFrameStream(frames, publishPose, {
-        onComplete: finalPose => {
-            if (finalPose && typeof finalPose === "object") {
-                onUpdate("pose", { pose: finalPose })
-            }
-            setActivePreset(null)
-        },
-    })
-
-    const play = name => {
-        stop()
-        setActivePreset(name)
-        const reqId = ++activeReqIdRef.current
-
-        generatePresetFramesAsync(name, dimensions, 3, startPose, 30).then(generatedFrames => {
-            if (reqId === activeReqIdRef.current && Array.isArray(generatedFrames) && generatedFrames.length > 0) {
-                setFrames(generatedFrames)
-            }
-        })
-    }
-
-    const stopAll = () => {
-        stop()
-        activeReqIdRef.current++
-        setActivePreset(null)
-        setFrames([])
-    }
-
-    return (
-        <div className="border" style={{ margin: "10px", padding: "12px", background: "rgba(15, 23, 42, 0.65)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                <h2 style={{ margin: 0, fontSize: "1.3rem", color: "var(--c1-green)" }}>
-                    Dynamic Motion Presets
-                </h2>
-                {activePreset && (
-                    <span style={{ 
-                        display: "flex", 
-                        alignItems: "center", 
-                        gap: "6px", 
-                        padding: "2px 8px", 
-                        borderRadius: "12px", 
-                        background: "rgba(252, 66, 123, 0.2)",
-                        border: "1px solid var(--c2-pink)",
-                        fontSize: "0.7rem",
-                        color: "var(--c2-pink)"
-                    }}>
-                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--c2-pink)", animation: "pulse 1s infinite" }} />
-                        Executing: <strong>{activePreset}</strong>
-                    </span>
-                )}
-            </div>
-
-            <p className="label" style={{ marginBottom: "12px", color: "#94a3b8" }}>
-                High-speed 60FPS Quintic Minimum-Jerk interpolation streamed to hardware at 10Hz.
-            </p>
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "8px", marginBottom: "12px" }}>
-                {PRESETS.map(p => {
-                    const isRunning = activePreset === p.name
-                    return (
-                        <button
-                            key={p.name}
-                            type="button"
-                            onClick={() => play(p.name)}
-                            style={{
-                                display: "flex",
-                                flexDirection: "column",
-                                alignItems: "flex-start",
-                                padding: "8px 10px",
-                                borderRadius: "6px",
-                                border: isRunning ? "1px solid var(--c1-green)" : "1px solid rgba(41, 128, 185, 0.4)",
-                                background: isRunning ? "rgba(50, 255, 126, 0.15)" : "rgba(23, 33, 43, 0.8)",
-                                color: isRunning ? "var(--c1-green)" : "#e2e8f0",
-                                cursor: "pointer",
-                                transition: "all 0.2s ease-in-out",
-                                textAlign: "left"
-                            }}
-                            aria-label={p.label}
-                        >
-                            <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.85rem", fontWeight: "bold" }}>
-                                <span>{p.icon}</span>
-                                <span>{p.label}</span>
-                            </div>
-                            <span style={{ fontSize: "0.62rem", color: "#64748b", marginTop: "4px" }}>
-                                {p.desc}
-                            </span>
-                        </button>
-                    )
-                })}
-            </div>
-
-            <div style={{ display: "flex", gap: "8px" }}>
-                <button
-                    type="button"
-                    onClick={stopAll}
-                    style={{
-                        flex: 1,
-                        padding: "8px",
-                        borderRadius: "6px",
-                        border: "1px solid var(--c6-red)",
-                        background: "rgba(255, 33, 33, 0.15)",
-                        color: "var(--c6-red)",
-                        fontWeight: "bold",
-                        cursor: activePreset ? "pointer" : "default",
-                        opacity: activePreset ? 1 : 0.6
-                    }}
-                    disabled={!activePreset}
-                >
-                    ⏹ Stop Motion Sequence
-                </button>
-            </div>
-        </div>
-    )
-}
-
-export default PresetsPage
 
 ================================================================================
 # FILE: src\components\pages\SensorPanel.js
@@ -4643,6 +4083,7 @@ export default WalkingGaitsPage
 # FILE: src\components\pages\index.js
 ================================================================================
 
+// web-ui/src/components/pages/index.js
 import ForwardKinematicsPage from "./ForwardKinematicsPage"
 import InverseKinematicsPage from "./InverseKinematicsPage"
 import LandingPage from "./LandingPage"
@@ -4652,9 +4093,7 @@ import CameraPanel from "./CameraPanel"
 import SensorPanel from "./SensorPanel"
 import AudioPanel from "./AudioPanel"
 import AIPanel from "./AIPanel"
-import PresetsPage from "./PresetsPage"
 import JudgementPanel from "./JudgementPanel"
-
 
 export {
     ForwardKinematicsPage,
@@ -4666,7 +4105,6 @@ export {
     SensorPanel,
     AudioPanel,
     AIPanel,
-    PresetsPage,
     JudgementPanel, 
 }
 
@@ -5101,8 +4539,8 @@ describe("ViewportToggle", () => {
 
 {
   "version": 1,
-  "updated": "2026-08-18",
-  "notes": "MIRROR of docs/future-roadmap/ai-voice/actions.json (P5 AI action table). Keep in sync with the canonical file — the RPi ai-service and the LLM tool schema read the canonical copy.",
+  "updated": "2026-08-22",
+  "notes": "Canonical AI voice action table (P5). Single source of truth for (a) web-ui AI action cards, (b) the RPi ai-service deterministic stage-1 parser, and (c) the LLM function-calling schema. Mirrors: web-ui/src/constants/aiActions.json, pi-hub/services/ai-service/actions.json. Payloads match the S3 motion/audio contract verbatim (PLAN.md §3).",
   "actions": [
     {
       "id": "walk_forward",
@@ -5224,11 +4662,22 @@ describe("ViewportToggle", () => {
       "reply": "Nice and calm.",
       "safety": { "motion": false, "voice": true }
     },
-    {
+{
       "id": "preset_wave",
       "name": "Wave",
       "keywords": ["wave", "wave hello", "say hi", "greet", "give me a wave"],
-      "payload": { "type": "preset", "preset": "wave" },
+      "payload": {
+        "type": "sequence",
+        "name": "wave",
+        "keyframes": [
+          { "duration_ms": 40, "joints": { "rf": { "alpha": 0, "beta": 0, "gamma": 0 } }, "easing": "easeInOutCubic" },
+          { "duration_ms": 400, "joints": { "rf": { "alpha": 0, "beta": 50, "gamma": -45 } }, "easing": "easeInOutQuad" },
+          { "duration_ms": 400, "joints": { "rf": { "alpha": 30, "beta": 50, "gamma": -45 } }, "easing": "easeInOutSine" },
+          { "duration_ms": 400, "joints": { "rf": { "alpha": -30, "beta": 50, "gamma": -45 } }, "easing": "easeInOutSine" },
+          { "duration_ms": 400, "joints": { "rf": { "alpha": 30, "beta": 50, "gamma": -45 } }, "easing": "easeInOutSine" },
+          { "duration_ms": 560, "joints": { "rf": { "alpha": 0, "beta": 0, "gamma": 0 } }, "easing": "easeInOutQuad" }
+        ]
+      },
       "topic": "cmd",
       "duration_ms": 4000,
       "reply": "Hello there — wave!",
@@ -5238,7 +4687,17 @@ describe("ViewportToggle", () => {
       "id": "preset_cheer",
       "name": "Cheer",
       "keywords": ["cheer", "celebrate", "double wave", "yay", "hooray", "do a cheer"],
-      "payload": { "type": "preset", "preset": "cheer" },
+      "payload": {
+        "type": "sequence",
+        "name": "cheer",
+        "keyframes": [
+          { "duration_ms": 40, "joints": { "rf": { "alpha": 0, "beta": 0, "gamma": 0 }, "lf": { "alpha": 0, "beta": 0, "gamma": 0 } }, "easing": "easeInOutCubic" },
+          { "duration_ms": 600, "joints": { "rf": { "alpha": 20, "beta": 50, "gamma": -45 }, "lf": { "alpha": -20, "beta": 50, "gamma": -45 } }, "easing": "easeInOutQuad" },
+          { "duration_ms": 600, "joints": { "rf": { "alpha": -10, "beta": 55, "gamma": -45 }, "lf": { "alpha": 10, "beta": 55, "gamma": -45 } }, "easing": "easeInOutSine" },
+          { "duration_ms": 600, "joints": { "rf": { "alpha": 20, "beta": 50, "gamma": -45 }, "lf": { "alpha": -20, "beta": 50, "gamma": -45 } }, "easing": "easeInOutSine" },
+          { "duration_ms": 600, "joints": { "rf": { "alpha": 0, "beta": 0, "gamma": 0 }, "lf": { "alpha": 0, "beta": 0, "gamma": 0 } }, "easing": "easeInOutQuad" }
+        ]
+      },
       "topic": "cmd",
       "duration_ms": 4000,
       "reply": "Woo-hoo! Cheering!",
@@ -5248,7 +4707,16 @@ describe("ViewportToggle", () => {
       "id": "preset_look_around",
       "name": "Look Around",
       "keywords": ["look around", "look left", "look right", "turn head", "survey the room", "look about"],
-      "payload": { "type": "preset", "preset": "lookAround" },
+      "payload": {
+        "type": "sequence",
+        "name": "look_around",
+        "keyframes": [
+          { "duration_ms": 40, "rz": 0, "ry": 0, "easing": "easeInOutCubic" },
+          { "duration_ms": 900, "rz": 25, "ry": 5, "easing": "easeInOutCubic" },
+          { "duration_ms": 1200, "rz": -25, "ry": -5, "easing": "easeInOutCubic" },
+          { "duration_ms": 900, "rz": 0, "ry": 0, "easing": "easeInOutCubic" }
+        ]
+      },
       "topic": "cmd",
       "duration_ms": 5000,
       "reply": "Looking around.",
@@ -5258,10 +4726,79 @@ describe("ViewportToggle", () => {
       "id": "preset_stretch",
       "name": "Stretch",
       "keywords": ["stretch", "do a stretch", "stretch out", "limber up", "do stretches"],
-      "payload": { "type": "preset", "preset": "stretch" },
+      "payload": {
+        "type": "sequence",
+        "name": "stretch",
+        "keyframes": [
+          { "duration_ms": 40, "tz": 0, "rx": 0, "ry": 0, "rz": 0, "easing": "easeInOutCubic" },
+          { "duration_ms": 700, "tz": 30, "rx": 15, "ry": 0, "rz": 12, "easing": "easeInOutCubic" },
+          { "duration_ms": 700, "tz": -15, "rx": -15, "ry": 0, "rz": -12, "easing": "easeInOutCubic" },
+          { "duration_ms": 600, "tz": 0, "rx": 0, "ry": 0, "rz": 0, "easing": "easeInOutCubic" }
+        ]
+      },
       "topic": "cmd",
       "duration_ms": 5000,
       "reply": "Ahh — nice stretch.",
+      "safety": { "motion": true, "voice": true }
+    },
+    {
+      "id": "preset_pushups",
+      "name": "Push-ups",
+      "keywords": ["pushups", "push ups", "do pushups", "do push ups", "workout", "exercise"],
+      "payload": {
+        "type": "sequence",
+        "name": "pushups",
+        "keyframes": [
+          { "duration_ms": 40, "tz": 0, "easing": "easeInOutSine" },
+          { "duration_ms": 900, "tz": -60, "easing": "easeInOutSine" },
+          { "duration_ms": 900, "tz": 20, "easing": "easeInOutSine" },
+          { "duration_ms": 900, "tz": -60, "easing": "easeInOutSine" },
+          { "duration_ms": 900, "tz": 20, "easing": "easeInOutSine" },
+          { "duration_ms": 900, "tz": 0, "easing": "easeInOutSine" }
+        ]
+      },
+      "topic": "cmd",
+      "duration_ms": 4500,
+      "reply": "Dropping down for push-ups!",
+      "safety": { "motion": true, "voice": true }
+    },
+    {
+      "id": "preset_bow",
+      "name": "Bow",
+      "keywords": ["bow", "take a bow", "curtsy", "formal bow", "do a bow"],
+      "payload": {
+        "type": "sequence",
+        "name": "bow",
+        "keyframes": [
+          { "duration_ms": 40, "tz": 0, "rx": 0, "easing": "easeInOutCubic" },
+          { "duration_ms": 1400, "tz": -20, "rx": 25, "easing": "easeInOutCubic" },
+          { "duration_ms": 1000, "tz": -20, "rx": 25, "easing": "easeInOutCubic" },
+          { "duration_ms": 1100, "tz": 0, "rx": 0, "easing": "easeInOutCubic" }
+        ]
+      },
+      "topic": "cmd",
+      "duration_ms": 3500,
+      "reply": "Thank you, thank you!",
+      "safety": { "motion": true, "voice": true }
+    },
+    {
+      "id": "preset_dance",
+      "name": "Dance",
+      "keywords": ["dance", "do a dance", "party", "bust a move", "groove", "dance for me"],
+      "payload": {
+        "type": "sequence",
+        "name": "dance",
+        "keyframes": [
+          { "duration_ms": 40, "tx": 0, "ty": 0, "tz": 0, "rx": 0, "ry": 0, "rz": 0, "easing": "easeInOutSine" },
+          { "duration_ms": 1250, "tx": 0, "ty": 20, "tz": 15, "rx": 10, "ry": 10, "rz": 15, "easing": "easeInOutSine" },
+          { "duration_ms": 1250, "tx": 0, "ty": -20, "tz": 0, "rx": -10, "ry": -10, "rz": -15, "easing": "easeInOutSine" },
+          { "duration_ms": 1250, "tx": 0, "ty": 20, "tz": 15, "rx": 10, "ry": 10, "rz": 15, "easing": "easeInOutSine" },
+          { "duration_ms": 1250, "tx": 0, "ty": 0, "tz": 0, "rx": 0, "ry": 0, "rz": 0, "easing": "easeInOutSine" }
+        ]
+      },
+      "topic": "cmd",
+      "duration_ms": 5000,
+      "reply": "Look at these moves!",
       "safety": { "motion": true, "voice": true }
     }
   ]
@@ -7594,6 +7131,64 @@ export async function generateLocomotionFrames(actionId, dimensions, durationMs 
     return frames
 }
 
+export async function generateDynamicSequenceFramesAsync(keyframes, dimensions, startPose = DEFAULT_POSE) {
+    if (!keyframes || !Array.isArray(keyframes) || keyframes.length === 0) {
+        return [startPose, DEFAULT_POSE]
+    }
+
+    const LEG_KEYS = {
+        rf: "rightFront",
+        rm: "rightMiddle",
+        rr: "rightBack",
+        lr: "leftBack",
+        lm: "leftMiddle",
+        lf: "leftFront",
+    }
+
+    const convertedPoses = []
+    convertedPoses.push(startPose)
+
+    for (let i = 0; i < keyframes.length; i++) {
+        const kf = keyframes[i]
+        let framePose = JSON.parse(JSON.stringify(DEFAULT_POSE))
+
+        // A. Body Cartesian IK Keyframe
+        if (kf.tx !== undefined || kf.ty !== undefined || kf.tz !== undefined || kf.rx !== undefined || kf.ry !== undefined || kf.rz !== undefined) {
+            framePose = getIkPose(dimensions, {
+                tx: (kf.tx || 0) / 100.0,
+                ty: (kf.ty || 0) / 100.0,
+                tz: (kf.tz || 0) / 132.0,
+                rx: kf.rx || 0,
+                ry: kf.ry || 0,
+                rz: kf.rz || 0,
+                hipStance: 20,
+                legStance: 0,
+            })
+        }
+
+        // B. Joint Overrides (e.g. waving front leg)
+        if (kf.joints && typeof kf.joints === "object") {
+            Object.entries(kf.joints).forEach(([shortKey, angles]) => {
+                const fullLegName = LEG_KEYS[shortKey] || shortKey
+                if (framePose[fullLegName]) {
+                    framePose[fullLegName] = {
+                        alpha: angles.alpha !== undefined ? angles.alpha : framePose[fullLegName].alpha,
+                        beta: angles.beta !== undefined ? angles.beta : framePose[fullLegName].beta,
+                        gamma: angles.gamma !== undefined ? angles.gamma : framePose[fullLegName].gamma,
+                    }
+                }
+            })
+        }
+
+        convertedPoses.push(framePose)
+    }
+
+    // Return to neutral stance at the end of gesture
+    convertedPoses.push(DEFAULT_POSE)
+
+    return await buildSequenceFromKeyframesAsync(convertedPoses, 15)
+}
+
 ================================================================================
 # FILE: src\hexapod\solvers\orient\orientSolverGeneral.js
 ================================================================================
@@ -8512,6 +8107,161 @@ const fillArray = (value, len) => {
 export default getWalkSequence
 
 ================================================================================
+# FILE: src\hooks\useAiMotionExecutor.js
+================================================================================
+
+// web-ui/src/hooks/useAiMotionExecutor.js
+import { useState, useRef, useCallback } from "react"
+import { DEFAULT_POSE, DEFAULT_DIMENSIONS } from "../templates"
+import { buildServoBatchPayload } from "../utils/servoMapper"
+import { 
+    generatePresetFramesAsync, 
+    generateLocomotionFrames, 
+    generateDynamicSequenceFramesAsync 
+} from "../hexapod/solvers/motionSynthesizer"
+import { usePoseFrameStream } from "./usePoseFrameStream"
+
+export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, publishAudio = () => {}, onUpdate = () => {} }) => {
+    const [activeFrames, setActiveFrames] = useState([])
+    const [activeExecutingAction, setActiveExecutingAction] = useState(null)
+    const activeReqIdRef = useRef(0)
+
+    // Local 60 FPS Visualizer (Zero MQTT Pose Spamming)
+    const { stop: stopStream } = usePoseFrameStream(
+        activeFrames,
+        () => {}, 
+        {
+            onComplete: finalPose => {
+                if (finalPose && typeof finalPose === "object") {
+                    onUpdate("pose", { pose: finalPose })
+                }
+                setActiveExecutingAction(null)
+            },
+        }
+    )
+
+    const playSequence = useCallback(
+        (actionPayload, actionName) => {
+            if (!actionPayload) return
+            stopStream()
+            const name = actionName || actionPayload.name || actionPayload.preset || "gesture"
+            setActiveExecutingAction(name)
+            const reqId = ++activeReqIdRef.current
+            const dims = params?.dimensions || DEFAULT_DIMENSIONS
+            const startPose = params?.pose || DEFAULT_POSE
+
+            // 1. Transmit sequence command to physical ESP32-S3 node
+            publishImmediate("hexapod/cmd", actionPayload)
+
+            // 2. Animate 3D Web-UI model dynamically
+            if (actionPayload.keyframes && Array.isArray(actionPayload.keyframes)) {
+                generateDynamicSequenceFramesAsync(actionPayload.keyframes, dims, startPose).then(frames => {
+                    if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
+                        setActiveFrames(frames)
+                    }
+                })
+            } else {
+                generatePresetFramesAsync(actionPayload.preset || name, dims, 3, startPose, 30).then(frames => {
+                    if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
+                        setActiveFrames(frames)
+                    }
+                })
+            }
+        },
+        [params, stopStream, publishImmediate]
+    )
+
+    const playLocomotion = useCallback(
+        (actionId, durationMs = 3000) => {
+            stopStream()
+            setActiveExecutingAction(actionId)
+            const reqId = ++activeReqIdRef.current
+            const dims = params?.dimensions || DEFAULT_DIMENSIONS
+            const startPose = params?.pose || DEFAULT_POSE
+
+            generateLocomotionFrames(actionId, dims, durationMs, startPose).then(frames => {
+                if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
+                    setActiveFrames(frames)
+                }
+            })
+        },
+        [params, stopStream]
+    )
+
+    const handleSingleJoint = useCallback(
+        jointParams => {
+            if (!jointParams?.leg) return
+            const { leg, joint, angle = 0, mode = "relative" } = jointParams
+            const jointMap = { coxa: "alpha", coxia: "alpha", femur: "beta", tibia: "gamma" }
+            const angleParam = jointMap[joint] || joint
+
+            const currentPose = params?.pose || DEFAULT_POSE
+            const currentAngle = currentPose[leg]?.[angleParam] || 0
+            let targetAngle = mode === "relative" ? currentAngle + angle : angle
+
+            if (angleParam === "alpha") targetAngle = Math.max(-40, Math.min(40, targetAngle))
+            if (angleParam === "beta") targetAngle = Math.max(-80, Math.min(80, targetAngle))
+            if (angleParam === "gamma") targetAngle = Math.max(-90, Math.min(90, targetAngle))
+
+            const newPose = { ...currentPose, [leg]: { ...currentPose[leg], [angleParam]: targetAngle } }
+            setActiveExecutingAction(`FK: ${leg} ${joint}`)
+            onUpdate("pose", { pose: newPose })
+            publishImmediate("hexapod/cmd", buildServoBatchPayload(newPose))
+        },
+        [params, onUpdate, publishImmediate]
+    )
+
+    const triggerAction = useCallback(
+        (action, jointParams = null) => {
+            if (!action && !jointParams) return
+
+            if (action === "single_joint" || action?.id === "single_joint") {
+                handleSingleJoint(jointParams || action?.joint_params)
+                return
+            }
+
+            const { payload, topic, duration_ms, name, id } = action
+
+            if (topic === "audio") {
+                publishAudio(payload)
+            } else if (payload?.type === "sequence" || payload?.type === "preset" || id?.startsWith("preset_")) {
+                playSequence(payload, name)
+            } else if (payload?.type === "motion") {
+                setActiveExecutingAction(name)
+                publishImmediate("hexapod/cmd", payload)
+                if (id === "stop") {
+                    stopStream()
+                    setActiveExecutingAction(null)
+                    onUpdate("pose", { pose: DEFAULT_POSE })
+                } else {
+                    playLocomotion(id, duration_ms || 3000)
+                    if (duration_ms > 0) {
+                        setTimeout(() => {
+                            publishImmediate("hexapod/cmd", { ...payload, vx: 0, vy: 0, omega: 0 })
+                        }, duration_ms)
+                    }
+                }
+            } else {
+                setActiveExecutingAction(name)
+                publishImmediate("hexapod/cmd", payload)
+            }
+        },
+        [publishAudio, publishImmediate, playSequence, playLocomotion, stopStream, onUpdate, handleSingleJoint]
+    )
+
+    const stopAll = useCallback(() => {
+        stopStream()
+        activeReqIdRef.current++
+        setActiveExecutingAction(null)
+        setActiveFrames([])
+        publishImmediate("hexapod/cmd", { type: "motion", vx: 0, vy: 0, omega: 0 })
+        onUpdate("pose", { pose: DEFAULT_POSE })
+    }, [stopStream, publishImmediate, onUpdate])
+
+    return { activeExecutingAction, triggerAction, stopAll }
+}
+
+================================================================================
 # FILE: src\hooks\useContinuousWakeWord.js
 ================================================================================
 
@@ -9076,6 +8826,113 @@ export const usePoseFrameStream = (
 }
 
 export default usePoseFrameStream
+
+================================================================================
+# FILE: src\hooks\useVoiceRecorder.js
+================================================================================
+
+// web-ui/src/hooks/useVoiceRecorder.js
+import { useState, useRef, useCallback } from "react"
+import { buildWav, to16kPcm, bytesToBase64, VOICE_PROCESSOR_CODE } from "../utils/aiAudio"
+
+const SILENCE_RMS = 0.02
+const MAX_SLICE_MS = 2500
+
+export const useVoiceRecorder = ({ onAudioRecorded = () => {} }) => {
+    const [recording, setRecording] = useState(false)
+    const [micBlocked, setMicBlocked] = useState(false)
+
+    const recordingRef = useRef({})
+    const audioChunksRef = useRef([])
+    const audioSampleRateRef = useRef(48000)
+
+    const finalizeRecording = useCallback(() => {
+        const chunks = audioChunksRef.current
+        audioChunksRef.current = []
+        if (!chunks || chunks.length === 0) return
+
+        const totalLen = chunks.reduce((acc, c) => acc + c.length, 0)
+        if (totalLen === 0) return
+
+        const joined = new Float32Array(totalLen)
+        let offset = 0
+        for (let i = 0; i < chunks.length; i++) {
+            joined.set(chunks[i], offset)
+            offset += chunks[i].length
+        }
+
+        const sampleRate = audioSampleRateRef.current || 48000
+        const pcm = to16kPcm(joined, sampleRate)
+        const wav = buildWav(pcm, 16000)
+        const b64 = bytesToBase64(wav)
+        const durationMs = Math.round((pcm.length / 16000) * 1000)
+
+        if (durationMs >= 200) {
+            onAudioRecorded({ base64Wav: b64, durationMs })
+        }
+    }, [onAudioRecorded])
+
+    const startMic = useCallback(async () => {
+        try {
+            audioChunksRef.current = []
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: true, noiseSuppression: true },
+            })
+            const AudioCtx = window.AudioContext || window.webkitAudioContext
+            const ctx = new AudioCtx()
+            const source = ctx.createMediaStreamSource(stream)
+
+            const blob = new Blob([VOICE_PROCESSOR_CODE], { type: "application/javascript" })
+            const workletUrl = URL.createObjectURL(blob)
+            await ctx.audioWorklet.addModule(workletUrl)
+            URL.revokeObjectURL(workletUrl)
+
+            const workletNode = new AudioWorkletNode(ctx, "voice-capture-processor", {
+                processorOptions: {
+                    sampleRate: ctx.sampleRate || 48000,
+                    silenceRms: SILENCE_RMS,
+                    maxSliceMs: MAX_SLICE_MS,
+                },
+            })
+
+            workletNode.port.onmessage = e => {
+                if (e.data?.type === "audio_slice" && e.data.samples?.length > 0) {
+                    audioChunksRef.current.push(e.data.samples)
+                    audioSampleRateRef.current = e.data.sampleRate || 48000
+                }
+            }
+
+            source.connect(workletNode)
+            recordingRef.current = { ctx, stream, workletNode }
+            setRecording(true)
+            setMicBlocked(false)
+        } catch (err) {
+            console.error("[useVoiceRecorder] Mic error:", err)
+            setMicBlocked(true)
+        }
+    }, [])
+
+    const stopMic = useCallback(() => {
+        const rec = recordingRef.current
+        if (rec.workletNode) {
+            try { rec.workletNode.port.postMessage({ command: "flush" }) } catch (e) {}
+            setTimeout(() => {
+                if (rec.workletNode) rec.workletNode.disconnect()
+                if (rec.stream) rec.stream.getTracks().forEach(t => t.stop())
+                if (rec.ctx) rec.ctx.close().catch(() => {})
+                recordingRef.current = {}
+                setRecording(false)
+                finalizeRecording()
+            }, 40)
+        } else {
+            recordingRef.current = {}
+            setRecording(false)
+            finalizeRecording()
+        }
+    }, [finalizeRecording])
+
+    return { recording, micBlocked, startMic, stopMic }
+}
 
 ================================================================================
 # FILE: src\index.css
@@ -13123,6 +12980,59 @@ export const matchAction = (text, actions) => {
         if (hit) return action
     }
     return null
+}
+
+================================================================================
+# FILE: src\utils\aiActionResolver.js
+================================================================================
+
+// web-ui/src/utils/aiActionResolver.js
+import { matchAction } from "./aiActionMatcher"
+
+/**
+ * Resolves an incoming AI message or directive into a canonical action object.
+ * Strictly checks explicit directive properties (action_id, action, preset, joint_params)
+ * to avoid false-positive triggers from conversational text or raw audio transcripts.
+ */
+export const resolveAction = (msg, actionsList = []) => {
+    if (!msg) return null
+
+    // 1. Single-Joint Stand Articulation
+    if (msg.action_id === "single_joint" || msg.action === "single_joint" || msg.joint_params) {
+        return { id: "single_joint", joint_params: msg.joint_params }
+    }
+
+    const actionId = msg.action_id || msg.action || (msg.type === "directive" ? msg.preset : null)
+    if (!actionId) return null
+
+    const rawStr = String(actionId).trim()
+
+    // 2. Direct ID Match
+    let found = actionsList.find(x => x.id.toLowerCase() === rawStr.toLowerCase())
+    if (found) return found
+
+    // 3. Preset Name Match (e.g. payload.preset === "lookAround")
+    found = actionsList.find(x => x.payload?.preset && x.payload.preset.toLowerCase() === rawStr.toLowerCase())
+    if (found) return found
+
+    // 4. Action Card Display Name Match
+    found = actionsList.find(x => x.name.toLowerCase() === rawStr.toLowerCase())
+    if (found) return found
+
+    // 5. Normalized Match (handling snake_case / camelCase / hyphens)
+    const normalized = rawStr.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]/g, " ").toLowerCase()
+    found = actionsList.find(x => {
+        if (x.id.replace(/[_-]/g, " ").toLowerCase() === normalized) return true
+        if (x.name.toLowerCase() === normalized) return true
+        if (Array.isArray(x.keywords) && x.keywords.some(kw => kw.toLowerCase() === normalized || normalized.includes(kw.toLowerCase()))) {
+            return true
+        }
+        return false
+    })
+    if (found) return found
+
+    // 6. Generic Action Matcher fallback on the action ID string
+    return matchAction(rawStr, actionsList)
 }
 
 ================================================================================

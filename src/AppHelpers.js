@@ -13,7 +13,6 @@ import {
     SensorPanel,
     AudioPanel,
     AIPanel,
-    PresetsPage,
     JudgementPanel,
 } from "./components/pages"
 
@@ -53,9 +52,12 @@ const Page = ({ pageComponent }) => (
         <Route path={PATHS.ai.path} exact>
             {pageComponent(AIPanel)}
         </Route>
-        <Route path={PATHS.presets.path} exact>
-            {pageComponent(PresetsPage)}
-        </Route>
+        {/* Redirect old Presets tab to the AI Assistant panel */}
+        {PATHS.presets && (
+            <Route path={PATHS.presets.path} exact>
+                <Redirect to={PATHS.ai.path} />
+            </Route>
+        )}
         <Route path={PATHS.judgement.path} exact>
             {pageComponent(JudgementPanel)}
         </Route>
