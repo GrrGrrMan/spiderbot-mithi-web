@@ -13,7 +13,6 @@ import {
     SensorPanel,
     AudioPanel,
     AIPanel,
-    JudgementPanel,
 } from "./components/pages"
 
 const UPDATE_TYPES = {
@@ -58,9 +57,6 @@ const Page = ({ pageComponent }) => (
                 <Redirect to={PATHS.ai.path} />
             </Route>
         )}
-        <Route path={PATHS.judgement.path} exact>
-            {pageComponent(JudgementPanel)}
-        </Route>
         <Route>
             <Redirect to="/" />
         </Route>

@@ -6,6 +6,7 @@ import { AiChatTerminal } from "../ai/AiChatTerminal"
 import { AiInputControls } from "../ai/AiInputControls"
 import { AiActionGrid } from "../ai/AiActionGrid"
 import { AiTaskStepper } from "../ai/AiTaskStepper"
+import { SentinelStatusCard } from "../ai/SentinelStatusCard"
 
 const AIPanel = ({
     aiStatus = null,
@@ -16,6 +17,10 @@ const AIPanel = ({
     aiChat,
     activeExecutingAction,
     stopAll,
+    smartSpeaker,
+    setSmartSpeaker,
+    sentinel,
+    sentinelLog,
 }) => {
     useEffect(() => {
         onMount(SECTION_NAMES.ai)
@@ -24,10 +29,28 @@ const AIPanel = ({
     return (
         <div className="border" style={{ margin: "10px", padding: "12px", background: "rgba(15, 23, 42, 0.65)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                <h2 style={{ margin: 0, fontSize: "1.3rem", color: "var(--c1-green)" }}>
-                    AI Assistant & Direct Actions
-                </h2>
-                <div style={{ display: "flex", gap: "6px" }}>
+            <h2 style={{ margin: 0, fontSize: "1.3rem", color: "var(--c1-green)" }}>
+                AI Assistant & Direct Actions
+            </h2>
+            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                <button
+                    type="button"
+                    onClick={() => setSmartSpeaker(!smartSpeaker)}
+                    style={{
+                        padding: "2px 8px",
+                        borderRadius: "5px",
+                        backgroundColor: smartSpeaker ? "rgba(50, 255, 126, 0.2)" : "rgba(23, 33, 43, 0.85)",
+                        border: `1px solid ${smartSpeaker ? "var(--c1-green)" : "rgba(41, 128, 185, 0.5)"}`,
+                        color: smartSpeaker ? "var(--c1-green)" : "#e2e8f0",
+                        fontSize: "0.65rem",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px"
+                    }}
+                >
+                    <span role="img" aria-label="mic">{smartSpeaker ? "🎙️" : "🔇"}</span> Smart Speaker
+                </button>
                     {activeExecutingAction && (
                         <span
                             style={{
@@ -70,9 +93,22 @@ const AIPanel = ({
                 </div>
             </div>
 
-            <AiStatusBar aiOnline={aiChat?.aiOnline} aiStatus={aiStatus} audioStatus={audioStatus} isConnected={isConnected} />
+        {smartSpeaker && sentinel && (
+            <div style={{ marginBottom: "12px" }}>
+                <SentinelStatusCard 
+                    wakeWordState={sentinel.wakeWordState} 
+                    isListening={sentinel.isListening} 
+                    micError={sentinel.micError} 
+                    lastTranscript={sentinel.lastTranscript} 
+                    lastAcceptedCommand={sentinel.lastAcceptedCommand} 
+                    actionLog={sentinelLog} 
+                />
+            </div>
+        )}
 
-            <AiTaskStepper
+        <AiStatusBar aiOnline={aiChat?.aiOnline} aiStatus={aiStatus} audioStatus={audioStatus} isConnected={isConnected} />
+
+        <AiTaskStepper
                 isThinking={aiChat?.isThinking}
                 thoughtText={aiChat?.thoughtText}
                 thoughtTps={aiChat?.thoughtTps}

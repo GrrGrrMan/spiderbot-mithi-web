@@ -1,9 +1,8 @@
 // FILE: src/components/hub/HubFab.js
 import React from "react"
 import { FaSlidersH } from "react-icons/fa"
-import { useCornerSnap } from "../../hooks/useCornerSnap"
 
-export const HubFab = ({ isOpen, onToggle, activeColor, isExecuting }) => {
+export const HubFab = ({ isOpen, onToggle, activeColor, isExecuting, cornerSnap }) => {
     const {
         elementRef,
         pos,
@@ -14,14 +13,7 @@ export const HubFab = ({ isOpen, onToggle, activeColor, isExecuting }) => {
         handlePointerMove,
         handlePointerUp,
         handlePointerCancel,
-    } = useCornerSnap({
-        boundary: "window",
-        defaultCorner: "bottom-left",
-        marginX: 20,
-        marginY: 20,
-        defaultWidth: 145,
-        defaultHeight: 42,
-    })
+    } = cornerSnap
 
     return (
         <button
@@ -42,6 +34,8 @@ export const HubFab = ({ isOpen, onToggle, activeColor, isExecuting }) => {
                 left: `${pos.x}px`,
                 top: `${pos.y}px`,
                 zIndex: 99,
+                opacity: isOpen ? 0 : 1,
+                pointerEvents: isOpen ? "none" : "auto",
                 display: "inline-flex",
                 alignItems: "center",
                 gap: "8px",
@@ -58,11 +52,11 @@ export const HubFab = ({ isOpen, onToggle, activeColor, isExecuting }) => {
                 whiteSpace: "nowrap",
                 flexShrink: 0,
                 minWidth: "max-content",
-                transform: isDragging ? "scale(1.06)" : "scale(1)",
+                transform: isOpen ? "scale(0.8)" : isDragging ? "scale(1.06)" : "scale(1)",
                 // Zero-lag instant trackpad response while dragging; spring snap on release
                 transition: isDragging
                     ? "none"
-                    : "left 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), top 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.2s, box-shadow 0.25s, border-color 0.25s",
+                    : "left 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), top 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease, box-shadow 0.25s, border-color 0.25s",
                 userSelect: "none",
                 touchAction: "none",
             }}

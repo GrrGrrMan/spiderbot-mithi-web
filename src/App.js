@@ -1,5 +1,5 @@
 // web-ui/src/App.js
-import React, { useState, useEffect, useCallback } from "react"
+import React, { useState, useEffect, useCallback, useRef } from "react"
 import { BrowserRouter as Router, useLocation } from "react-router-dom"
 import { DEFAULT_POSE } from "./templates"
 import { SECTION_NAMES } from "./components/vars"
@@ -11,13 +11,20 @@ import { useAiMotionExecutor } from "./hooks/useAiMotionExecutor"
 import { useAiChat } from "./hooks/useAiChat"
 import ViewportToggle from "./components/viewport/ViewportToggle"
 import CameraView from "./components/camera/CameraView"
+import DualStageViewport from "./components/camera/DualStageViewport"
 import AiChatOverlay from "./components/ai/AiChatOverlay"
+import { useContinuousWakeWord } from "./hooks/useContinuousWakeWord"
+import { matchAction } from "./utils/aiActionMatcher"
+import { resolveAction } from "./utils/aiActionResolver"
 
 function MainLayout() {
     const location = useLocation()
-    const isJudgementView = location.pathname === "/judgement"
 
     const [inHexapodPage, setInHexapodPage] = useState(false)
+    const [smartSpeaker, setSmartSpeaker] = useState(false)
+    const [sentinelLog, setSentinelLog] = useState([])
+    const lastProcessedMsgRef = useRef(null)
+    const lastDirectiveKeyRef = useRef(null)
     const [hexapod, setHexapod] = useState(() => updateHexapod("default"))
     const [revision, setRevision] = useState(0)
     const [isAiOverlayOpen, setIsAiOverlayOpen] = useState(false)
@@ -89,6 +96,77 @@ function MainLayout() {
         triggerAction,
     })
 
+    const speakFeedback = useCallback(text => {
+        if (!aiChat.aiOnline && "speechSynthesis" in window) {
+            window.speechSynthesis.cancel()
+            const utterance = new SpeechSynthesisUtterance(text)
+            utterance.rate = 1.05
+            utterance.pitch = 1.0
+            window.speechSynthesis.speak(utterance)
+        }
+    }, [aiChat.aiOnline])
+
+    const handleVoiceCommand = useCallback((commandText, fullUtterance) => {
+        const entry = { id: Date.now(), time: new Date().toLocaleTimeString(), full: fullUtterance, command: commandText }
+        setSentinelLog(prev => [entry, ...prev.slice(0, 20)])
+
+        if (aiChat.aiOnline) {
+            publishAi({ type: "text", role: "user", content: commandText })
+            return
+        }
+
+        const matchedAction = matchAction(commandText, aiChat.ACTIONS)
+        if (matchedAction) {
+            speakFeedback(matchedAction.reply || `Executing ${matchedAction.name}`)
+            triggerAction(matchedAction)
+        } else {
+            speakFeedback("Command not recognized.")
+        }
+    }, [aiChat.aiOnline, aiChat.ACTIONS, publishAi, triggerAction, speakFeedback])
+
+    const sentinel = useContinuousWakeWord({
+        onCommand: handleVoiceCommand,
+        publishAi,
+        aiOnline: aiChat.aiOnline,
+        audioStatus,
+        enabled: smartSpeaker
+    })
+
+    useEffect(() => {
+        if (!aiMessages || !aiMessages.length) return
+        const lastMsg = aiMessages[aiMessages.length - 1]
+        if (!lastMsg || lastMsg.type !== "transcription" || !lastMsg.content) return
+
+        const msgId = `${lastMsg.timestamp || ""}_${lastMsg.content}`
+        if (lastProcessedMsgRef.current === msgId) return
+        lastProcessedMsgRef.current = msgId
+
+        sentinel.filterAndDispatch(lastMsg.content)
+    }, [aiMessages, sentinel])
+
+    useEffect(() => {
+        if (!aiMessages || !aiMessages.length) return
+        const last = aiMessages[aiMessages.length - 1]
+        if (!last || (last.type !== "directive" && !last.action_id && !last.action && !last.joint_params)) {
+            return
+        }
+
+        const key = `${aiMessages.length}|${last.role}|${last.type}|${last.content || last.action_id || last.action || ""}`
+        if (lastDirectiveKeyRef.current === key) return
+        lastDirectiveKeyRef.current = key
+
+        const a = resolveAction(last, aiChat.ACTIONS)
+        if (a) triggerAction(a, last.joint_params)
+    }, [aiMessages, triggerAction, aiChat.ACTIONS])
+
+    // Hardware Watchdog Sync: Instantly stop UI animations if firmware applies emergency brakes
+    useEffect(() => {
+        if (telemetry?.watchdog_braked) {
+            stopAll()
+            window.dispatchEvent(new Event("hardware-watchdog-brake"))
+        }
+    }, [telemetry?.watchdog_braked, stopAll])
+
     const onPageLoad = useCallback(pageName => {
         document.title = pageName + " - Hexapod Robot Simulator"
         if (pageName === SECTION_NAMES.landingPage) {
@@ -126,6 +204,10 @@ function MainLayout() {
             triggerAction={triggerAction}
             stopAll={stopAll}
             aiChat={aiChat}
+            smartSpeaker={smartSpeaker}
+            setSmartSpeaker={setSmartSpeaker}
+            sentinel={sentinel}
+            sentinelLog={sentinelLog}
         />
     )
 
@@ -133,14 +215,8 @@ function MainLayout() {
         <>
             <Nav isConnected={isConnected} onToggleAi={() => setIsAiOverlayOpen(prev => !prev)} />
 
-            <div id="main" style={isJudgementView ? { display: "block" } : undefined}>
-                <div 
-                    id="sidebar" 
-                    style={{ 
-                        position: "relative", 
-                        ...(isJudgementView ? { width: "100%", maxWidth: "100%", margin: 0 } : {}) 
-                    }}
-                >
+            <div id="main">
+                <div id="sidebar" style={{ position: "relative" }}>
                     <AiChatOverlay
                         isOpen={isAiOverlayOpen}
                         onToggle={() => setIsAiOverlayOpen(prev => !prev)}
@@ -165,6 +241,10 @@ function MainLayout() {
                         triggerAction={triggerAction}
                         stopAll={stopAll}
                         aiChat={aiChat}
+                        smartSpeaker={smartSpeaker}
+                        setSmartSpeaker={setSmartSpeaker}
+                        sentinel={sentinel}
+                        sentinelLog={sentinelLog}
                     />
 
                     <div className="border" style={{ marginBottom: "15px", padding: "10px" }}>
@@ -184,7 +264,7 @@ function MainLayout() {
                         )}
                     </div>
 
-                    <div hidden={!inHexapodPage || isJudgementView}>
+                   <div hidden={!inHexapodPage}>
                         <DimensionsWidget
                             params={{ dimensions: hexapod.dimensions }}
                             onUpdate={manageState}
@@ -203,13 +283,14 @@ function MainLayout() {
                         overflow: "hidden",
                         backgroundColor: "#0a0f1d",
                     }}
-                    hidden={(!inHexapodPage && activeView !== "cam") || isJudgementView}
+                    hidden={!inHexapodPage && activeView !== "cam" && activeView !== "dual"}
                 >
-                    {!isJudgementView && (
-                        <ViewportToggle activeView={activeView} onChange={setActiveView} />
-                    )}
+                    <ViewportToggle activeView={activeView} onChange={setActiveView} />
+                    
                     {activeView === "cam" ? (
                         <CameraView config={camConfig} telemetry={camTelemetry} isConnected={isConnected} />
+                    ) : activeView === "dual" ? (
+                        <DualStageViewport camConfig={camConfig} camTelemetry={camTelemetry} isConnected={isConnected} hexapod={hexapod} revision={revision} />
                     ) : (
                         <HexapodPlot revision={revision} hexapod={hexapod} />
                     )}

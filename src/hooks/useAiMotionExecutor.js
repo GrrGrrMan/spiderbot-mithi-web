@@ -14,6 +14,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
     const [activeExecutingAction, setActiveExecutingAction] = useState(null)
     const activeReqIdRef = useRef(0)
     const motionTimerRef = useRef(null) // ◄ Must be inside the hook
+    const motionIntervalRef = useRef(null)
 
     const paramsRef = useRef(params)
     paramsRef.current = params
@@ -23,17 +24,16 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
             clearTimeout(motionTimerRef.current)
             motionTimerRef.current = null
         }
+        if (motionIntervalRef.current) {
+            clearInterval(motionIntervalRef.current)
+            motionIntervalRef.current = null
+        }
     }, [])
 
     // Cleanup pending timer when component unmounts
     useEffect(() => {
-        return () => {
-            if (motionTimerRef.current) {
-                clearTimeout(motionTimerRef.current)
-                motionTimerRef.current = null
-            }
-        }
-    }, [])
+        return stopLocomotionTimer
+    }, [stopLocomotionTimer])
 
     // Local 60 FPS Visualizer (Zero MQTT Pose Spamming)
     const { stop: stopStream } = usePoseFrameStream(
@@ -147,10 +147,15 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
                     onUpdate("pose", { pose: DEFAULT_POSE })
                 } else {
                     playLocomotion(id, duration_ms || 3000)
+                    
+                    motionIntervalRef.current = setInterval(() => {
+                        publishImmediate("hexapod/cmd", payload)
+                    }, 1000)
+
                     if (duration_ms > 0) {
                         motionTimerRef.current = setTimeout(() => {
+                            stopLocomotionTimer()
                             publishImmediate("hexapod/cmd", { ...payload, vx: 0, vy: 0, omega: 0 })
-                            motionTimerRef.current = null
                         }, duration_ms)
                     }
                 }

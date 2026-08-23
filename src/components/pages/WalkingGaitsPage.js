@@ -75,10 +75,13 @@ class WalkingGaitsPage extends Component {
         this.props.onMount(this.pageName)
         const { isTripodGait, inWalkMode } = this.state
         this.setWalkSequence(DEFAULT_GAIT_PARAMS, isTripodGait, inWalkMode)
+        window.addEventListener("hardware-watchdog-brake", this.reset)
     }
 
     componentWillUnmount = () => {
         clearInterval(this.intervalID)
+        if (this.motionHeartbeatID) clearInterval(this.motionHeartbeatID)
+        window.removeEventListener("hardware-watchdog-brake", this.reset)
     }
 
     animate = () => {
@@ -140,10 +143,14 @@ class WalkingGaitsPage extends Component {
     reset = () => {
         const { isTripodGait, inWalkMode } = this.state
 
-        // 1. Halt the active Web UI animation loop & clear interval timer
+        // 1. Halt the active Web UI animation loop & clear interval timers
         if (this.intervalID) {
             clearInterval(this.intervalID)
             this.intervalID = null
+        }
+        if (this.motionHeartbeatID) {
+            clearInterval(this.motionHeartbeatID)
+            this.motionHeartbeatID = null
         }
 
         // 2. Reset all parameters and mark animation as stopped

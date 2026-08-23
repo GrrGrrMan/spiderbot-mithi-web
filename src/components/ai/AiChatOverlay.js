@@ -2,6 +2,7 @@
 import React, { useState, useCallback } from "react"
 import { FaRobot, FaTerminal } from "react-icons/fa"
 import { useDraggableModal } from "../../hooks/useDraggableModal"
+import { useCornerSnap } from "../../hooks/useCornerSnap"
 import { HubFab } from "../hub/HubFab"
 import { HubHeader } from "../hub/HubHeader"
 import { HubAiView } from "../hub/HubAiView"
@@ -26,6 +27,10 @@ export const AiChatOverlay = ({
     aiChat,
     activeExecutingAction,
     stopAll,
+    smartSpeaker,
+    setSmartSpeaker,
+    sentinel,
+    sentinelLog,
 }) => {
     const [activeTab, setActiveTab] = useState("ai")
     const [isMenuOpen, setIsMenuOpen] = useState(false)
@@ -50,19 +55,38 @@ export const AiChatOverlay = ({
         handlePointerCancel,
     } = useDraggableModal(20, 75)
 
+    const cornerSnap = useCornerSnap({
+        boundary: "window",
+        defaultCorner: "bottom-left",
+        marginX: 20,
+        marginY: 20,
+        defaultWidth: 145,
+        defaultHeight: 42,
+    })
+
     const activeConfig = TAB_CONFIG.find(t => t.id === activeTab) || TAB_CONFIG[0]
 
     return (
         <>
-            <HubFab isOpen={isOpen} onToggle={onToggle} activeColor={activeConfig.color} isExecuting={Boolean(activeExecutingAction)} />
+            <HubFab 
+                isOpen={isOpen} 
+                onToggle={onToggle} 
+                activeColor={activeConfig.color} 
+                isExecuting={Boolean(activeExecutingAction)} 
+                cornerSnap={cornerSnap} 
+            />
 
-            {isOpen && (
-                <div
-                    ref={cardRef}
-                    style={{
-                        position: "fixed",
-                        left: `${position.x}px`,
-                        top: `${position.y}px`,
+            <div
+                ref={cardRef}
+                style={{
+                    position: "fixed",
+                    left: `${isOpen ? position.x : cornerSnap.pos.x}px`,
+                    top: `${isOpen ? position.y : cornerSnap.pos.y}px`,
+                    opacity: isOpen ? 1 : 0,
+                    transform: isOpen ? "scale(1)" : "scale(0.4)",
+                    pointerEvents: isOpen ? "auto" : "none",
+                    visibility: isOpen ? "visible" : "hidden",
+                    transformOrigin: "top left",
                         width: "440px",
                         maxWidth: "calc(100vw - 20px)",
                         maxHeight: "calc(100vh - 85px)",
@@ -79,10 +103,10 @@ export const AiChatOverlay = ({
                         userSelect: isDragging ? "none" : "auto",
                         touchAction: "none",
                         willChange: isDragging ? "left, top" : "auto",
-                        // ── Instant 0ms response during drag; smooth magnetic spring on release ──
+                        // ── Instant 0ms response during drag; smooth OS-like transitions on release & toggle ──
                         transition: isDragging
                             ? "none"
-                            : "left 0.32s cubic-bezier(0.34, 1.56, 0.64, 1), top 0.32s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, border-color 0.2s ease",
+                            : "left 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), top 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease, visibility 0.35s, box-shadow 0.2s ease, border-color 0.2s ease",
                     }}
                     onClick={() => isMenuOpen && setIsMenuOpen(false)}
                 >
@@ -143,6 +167,10 @@ export const AiChatOverlay = ({
                                     isConfigOpen={aiChat?.isConfigOpen}
                                     setIsConfigOpen={aiChat?.setIsConfigOpen}
                                     onUpdateConfig={aiChat?.handleUpdateConfig}
+                                    smartSpeaker={smartSpeaker}
+                                    setSmartSpeaker={setSmartSpeaker}
+                                    sentinel={sentinel}
+                                    sentinelLog={sentinelLog}
                                 />
                             ) : (
                                 <HubSystemView
@@ -156,7 +184,6 @@ export const AiChatOverlay = ({
                         </div>
                     )}
                 </div>
-            )}
         </>
     )
 }

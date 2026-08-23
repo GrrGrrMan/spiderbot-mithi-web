@@ -7,7 +7,6 @@ import WalkingGaitsPage from "./WalkingGaitsPage"
 import SensorPanel from "./SensorPanel"
 import AudioPanel from "./AudioPanel"
 import AIPanel from "./AIPanel"
-import JudgementPanel from "./JudgementPanel"
 
 export {
     ForwardKinematicsPage,
@@ -18,5 +17,4 @@ export {
     SensorPanel,
     AudioPanel,
     AIPanel,
-    JudgementPanel, 
 }

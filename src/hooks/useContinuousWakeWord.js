@@ -22,6 +22,7 @@ export const useContinuousWakeWord = ({
 
     const isMountedRef = useRef(true)
     const myVadRef = useRef(null)
+    const isInitializingRef = useRef(false)
     const isPromptActiveRef = useRef(false)
     const promptTimerRef = useRef(null)
 
@@ -103,13 +104,27 @@ export const useContinuousWakeWord = ({
 
     useEffect(() => {
         isMountedRef.current = true
+        return () => {
+            isMountedRef.current = false
+            clearPromptTimer()
+            if (myVadRef.current) {
+                myVadRef.current.destroy()
+                myVadRef.current = null
+            }
+        }
+    }, [])
 
+    useEffect(() => {
         const initVAD = async () => {
+            if (isInitializingRef.current || myVadRef.current) return
+            isInitializingRef.current = true
+
             if (!window.vad) {
                 await new Promise((resolve) => setTimeout(resolve, 500))
             }
             if (!window.vad) {
-                setMicError("AI Voice engine failed to load from CDN. Check network.")
+                if (isMountedRef.current) setMicError("AI Voice engine failed to load from CDN. Check network.")
+                isInitializingRef.current = false
                 return
             }
 
@@ -145,7 +160,9 @@ export const useContinuousWakeWord = ({
                 })
 
                 myVadRef.current = myvad
+                isInitializingRef.current = false
 
+                // If user quickly toggled OFF while loading, don't start it
                 if (enabledRef.current && isMountedRef.current) {
                     myvad.start()
                     setIsListening(true)
@@ -153,6 +170,7 @@ export const useContinuousWakeWord = ({
                 }
             } catch (err) {
                 console.error("[Silero VAD] Init error:", err)
+                isInitializingRef.current = false
                 if (isMountedRef.current) {
                     setMicError("AI Microphone failed to initialize.")
                     setIsListening(false)
@@ -160,26 +178,18 @@ export const useContinuousWakeWord = ({
             }
         }
 
-        initVAD()
-
-        return () => {
-            isMountedRef.current = false
-            clearPromptTimer()
-            if (myVadRef.current) {
-                myVadRef.current.destroy()
-                myVadRef.current = null
-            }
-        }
-    }, [])
-
-    useEffect(() => {
-        if (!myVadRef.current) return
         if (enabled) {
-            myVadRef.current.start()
-            setIsListening(true)
+            if (!myVadRef.current) {
+                initVAD()
+            } else {
+                myVadRef.current.start()
+                setIsListening(true)
+            }
         } else {
-            myVadRef.current.pause()
-            setIsListening(false)
+            if (myVadRef.current) {
+                myVadRef.current.pause()
+                setIsListening(false)
+            }
         }
     }, [enabled])
 

@@ -16,7 +16,6 @@ const SECTION_NAMES = {
     audio: "Audio",
     ai: "AI Assistant",
     presets: "Presets",
-    judgement: "Judgement",
 }
 
 const PATH_NAMES = {
@@ -30,7 +29,6 @@ const PATH_NAMES = {
     audio: "/audio",
     ai: "/ai",
     presets: "/presets",
-    judgement: "/judgement",
 }
 
 const ANGLE_NAMES = ["alpha", "beta", "gamma"]
@@ -117,7 +115,6 @@ const ICON_COMPONENTS = {
     microchip: <FaMicrochip className="vertical-align" />,
     volume: <FaVolumeUp className="vertical-align" />,
     robot: <FaRobot className="vertical-align" />,
-    judgement: <FaBalanceScale className="vertical-align" />,
 }
 
 /*************
@@ -180,12 +177,6 @@ const PATHS = {
         icon: ICON_COMPONENTS.circle,
         hidden: true,
     },
-    judgement: {
-        path: PATH_NAMES.judgement,
-        description: SECTION_NAMES.judgement,
-        icon: ICON_COMPONENTS.judgement,
-        hidden: false,
-    },
 }
 
 const KOFI_LINK_PROPERTIES = {
@@ -209,7 +200,6 @@ const PATH_LINKS = [
     PATHS.walkingGaits,
     PATHS.ai,
     PATHS.presets,
-    PATHS.judgement,
     PATHS.camera,
     PATHS.sensors,
     PATHS.audio,

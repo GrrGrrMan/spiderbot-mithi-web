@@ -8,7 +8,6 @@
 const DEFAULT_PI_MDNS_HOST = "spider-w.local"
 const DEFAULT_HOTSPOT_GATEWAY = "192.168.4.1"
 const DEFAULT_MQTT_WS_PORT = 9001
-const DEFAULT_MQTT_WSS_PORT = 9443
 
 export const isLocalhost = (hostname) => {
     return (
@@ -45,12 +44,31 @@ export const resolvePiHost = (searchParams) => {
 export const resolveMqttBrokerUrl = (searchParams) => {
     if (typeof window === "undefined") return `ws://${DEFAULT_PI_MDNS_HOST}:${DEFAULT_MQTT_WS_PORT}`
 
-    const isHttps = window.location.protocol === "https:"
-    const wsScheme = isHttps ? "wss" : "ws"
-    const wsPort = isHttps ? DEFAULT_MQTT_WSS_PORT : DEFAULT_MQTT_WS_PORT
+    // 1. Explicit query override
+    const queryBroker = searchParams?.get("broker")
+    if (queryBroker) {
+        if (queryBroker.startsWith("ws://") || queryBroker.startsWith("wss://")) {
+            return queryBroker
+        }
+        const isHttps = window.location.protocol === "https:"
+        return `${isHttps ? "wss" : "ws"}://${queryBroker}${isHttps ? "/mqtt" : `:${DEFAULT_MQTT_WS_PORT}`}`
+    }
 
-    const piHost = resolvePiHost(searchParams)
-    return `${wsScheme}://${piHost}:${wsPort}`
+    const isHttps = window.location.protocol === "https:"
+    const currentHost = window.location.hostname
+
+    // 2. Development Mode on PC -> Direct WebSocket to Pi's Mosquitto port 9001
+    if (isLocalhost(currentHost)) {
+        return `ws://${DEFAULT_PI_MDNS_HOST}:${DEFAULT_MQTT_WS_PORT}`
+    }
+
+    // 3. HTTPS Secure Context (Tailscale HTTPS) -> Route WSS through Nginx /mqtt on Port 443
+    if (isHttps) {
+        return `wss://${window.location.host}/mqtt`
+    }
+
+    // 4. Standard HTTP Production Mode -> Direct WS to port 9001
+    return `ws://${currentHost}:${DEFAULT_MQTT_WS_PORT}`
 }
 
 /**

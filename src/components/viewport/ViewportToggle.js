@@ -1,15 +1,19 @@
 // FILE: src/components/viewport/ViewportToggle.js
 import React, { useRef, useCallback } from "react"
-import { FaCube, FaVideo } from "react-icons/fa"
+import { FaCube, FaVideo, FaColumns } from "react-icons/fa"
 import { useCornerSnap } from "../../hooks/useCornerSnap"
 
 const TABS = [
     { id: "sim", label: "SIM", icon: FaCube, title: "3D simulator view" },
     { id: "cam", label: "CAM", icon: FaVideo, title: "Live MJPEG camera view" },
+    { id: "dual", label: "DUAL", icon: FaColumns, title: "Side-by-side view" },
 ]
 
-const indicatorTransform = (activeId) =>
-    activeId === "cam" ? "translateX(100%)" : "translateX(0%)"
+const indicatorTransform = (activeId) => {
+    if (activeId === "cam") return "translateX(100%)"
+    if (activeId === "dual") return "translateX(200%)"
+    return "translateX(0%)"
+}
 
 const ViewportToggle = ({ activeView, onChange }) => {
     const clickedTabRef = useRef(null)
@@ -29,7 +33,7 @@ const ViewportToggle = ({ activeView, onChange }) => {
         defaultCorner: "bottom-right",
         marginX: 10,
         marginY: 10,
-        defaultWidth: 108,
+        defaultWidth: 156,
         defaultHeight: 28,
     })
 
@@ -59,7 +63,7 @@ const ViewportToggle = ({ activeView, onChange }) => {
         zIndex: 20,
         display: "flex",
         alignItems: "stretch",
-        width: "108px",
+        width: "156px",
         height: "28px",
         padding: "2px",
         borderRadius: "14px",
@@ -82,7 +86,7 @@ const ViewportToggle = ({ activeView, onChange }) => {
         position: "absolute",
         top: "2px",
         left: "2px",
-        width: "calc(50% - 2px)",
+        width: "calc(33.333% - 2.6px)",
         height: "calc(100% - 4px)",
         borderRadius: "12px",
         background: "var(--c1-green, #2ecc71)",
