@@ -1,12 +1,14 @@
 // web-ui/src/App.js
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useCallback } from "react"
 import { BrowserRouter as Router, useLocation } from "react-router-dom"
-import { DEFAULT_POSE } from "./templates"
+import { DEFAULT_POSE, DEFAULT_DIMENSIONS } from "./templates"
 import { SECTION_NAMES } from "./components/vars"
 import { Nav, NavDetailed, DimensionsWidget } from "./components"
 import { updateHexapod, Page } from "./AppHelpers"
 import HexapodPlot from "./components/HexapodPlot"
 import { useMqtt } from "./hooks/useMqtt"
+import { useAiMotionExecutor } from "./hooks/useAiMotionExecutor"
+import { useAiChat } from "./hooks/useAiChat"
 import ViewportToggle from "./components/viewport/ViewportToggle"
 import CameraView from "./components/camera/CameraView"
 import AiChatOverlay from "./components/ai/AiChatOverlay"
@@ -18,7 +20,7 @@ function MainLayout() {
     const [inHexapodPage, setInHexapodPage] = useState(false)
     const [hexapod, setHexapod] = useState(() => updateHexapod("default"))
     const [revision, setRevision] = useState(0)
-    const [isAiOverlayOpen, setIsAiOverlayOpen] = useState(false) // ◄ Overlay toggle
+    const [isAiOverlayOpen, setIsAiOverlayOpen] = useState(false)
 
     const [activeView, setActiveView] = useState(() => {
         if (typeof window === "undefined") return "sim"
@@ -45,7 +47,15 @@ function MainLayout() {
         publishAudio,
     } = useMqtt()
 
-    // Dimensions auto-sync from hardware config
+    const manageState = useCallback((updateType, newParam) => {
+        setHexapod(prevHexapod => {
+            const nextHexapod = updateHexapod(updateType, newParam, prevHexapod)
+            setRevision(prev => prev + 1)
+            return nextHexapod
+        })
+    }, [])
+
+    // Dimensions auto-sync from hardware config baseline
     useEffect(() => {
         if (!config || !config.dimensions) return
         const { coxia, femur, tibia, body_length, body_width_center, body_width_corner } = config.dimensions
@@ -58,7 +68,23 @@ function MainLayout() {
             tibia: Math.round(tibia),
         }
         manageState("dimensions", { dimensions: translatedDimensions })
-    }, [config])
+    }, [config, manageState])
+
+    // ── Single Authoritative Motion Executor ──
+    const { activeExecutingAction, triggerAction, stopAll } = useAiMotionExecutor({
+        params: { dimensions: hexapod.dimensions, pose: hexapod.pose },
+        publishImmediate,
+        publishAudio,
+        onUpdate: manageState,
+    })
+
+    // ── Single Authoritative AI Chat & Directive Engine ──
+    const aiChat = useAiChat({
+        aiMessages,
+        aiStatus,
+        publishAi,
+        triggerAction,
+    })
 
     const onPageLoad = pageName => {
         document.title = pageName + " - Hexapod Robot Simulator"
@@ -68,14 +94,6 @@ function MainLayout() {
         }
         setInHexapodPage(true)
         manageState("pose", { pose: DEFAULT_POSE })
-    }
-
-    const manageState = (updateType, newParam) => {
-        setHexapod(prevHexapod => {
-            const nextHexapod = updateHexapod(updateType, newParam, prevHexapod)
-            setRevision(prev => prev + 1)
-            return nextHexapod
-        })
     }
 
     const pageComponent = Component => (
@@ -100,6 +118,11 @@ function MainLayout() {
                 dimensions: hexapod.dimensions,
                 pose: hexapod.pose,
             }}
+            // Shared singleton instances passed to pages
+            activeExecutingAction={activeExecutingAction}
+            triggerAction={triggerAction}
+            stopAll={stopAll}
+            aiChat={aiChat}
         />
     )
 
@@ -108,7 +131,6 @@ function MainLayout() {
             <Nav isConnected={isConnected} onToggleAi={() => setIsAiOverlayOpen(prev => !prev)} />
 
             <div id="main" style={isJudgementView ? { display: "block" } : undefined}>
-                {/* ── Left Sidebar (relative positioning enables docked overlay) ── */}
                 <div 
                     id="sidebar" 
                     style={{ 
@@ -116,7 +138,6 @@ function MainLayout() {
                         ...(isJudgementView ? { width: "100%", maxWidth: "100%", margin: 0 } : {}) 
                     }}
                 >
-                    {/* Floating / Docked AI Overlay */}
                     <AiChatOverlay
                         isOpen={isAiOverlayOpen}
                         onToggle={() => setIsAiOverlayOpen(prev => !prev)}
@@ -137,9 +158,12 @@ function MainLayout() {
                             pose: hexapod.pose,
                         }}
                         onUpdate={manageState}
+                        activeExecutingAction={activeExecutingAction}
+                        triggerAction={triggerAction}
+                        stopAll={stopAll}
+                        aiChat={aiChat}
                     />
 
-                    {/* Robot Status Box */}
                     <div className="border" style={{ marginBottom: "15px", padding: "10px" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <span style={{ fontSize: "0.75rem", fontWeight: "bold" }}>ROBOT STATUS:</span>
@@ -168,7 +192,6 @@ function MainLayout() {
                     {!inHexapodPage ? <NavDetailed /> : null}
                 </div>
 
-                {/* ── Right Stage (3D Kinematics Simulator / Camera) ── */}
                 <div 
                     id="plot" 
                     className="border" 
@@ -179,7 +202,7 @@ function MainLayout() {
                     }}
                     hidden={(!inHexapodPage && activeView !== "cam") || isJudgementView}
                 >
-                    {(!isJudgementView) && (
+                    {!isJudgementView && (
                         <ViewportToggle activeView={activeView} onChange={setActiveView} />
                     )}
                     {activeView === "cam" ? (

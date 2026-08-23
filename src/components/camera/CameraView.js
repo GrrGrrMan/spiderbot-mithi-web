@@ -2,36 +2,15 @@
 import React, { useMemo, useRef, useState, useEffect } from "react"
 import StreamViewport from "./StreamViewport"
 import OfflinePlaceholder from "./OfflinePlaceholder"
+import { resolveCameraStreamUrl } from "../../utils/networkConfig"
 
-const CAM_STREAM_PORT = 81
-
-export const resolveMjpegUrl = (config, telemetry, searchParams) => {
-    const qOverride = searchParams?.get("mjpeg")
-    if (qOverride) return qOverride
-
-    // 1. If served from the Pi (Nginx reverse proxy), use the relative endpoint
-    if (typeof window !== "undefined" && window.location.hostname !== "localhost") {
-        return `${window.location.protocol}//${window.location.host}/cam-stream`
-    }
-
-    // 2. Direct firmware config broadcast
-    if (config && typeof config.mjpeg_url === "string" && config.mjpeg_url) {
-        return config.mjpeg_url
-    }
-
-    // 3. Fallback to direct telemetry IP
-    if (telemetry && telemetry.ip && telemetry.ip !== "0.0.0.0") {
-        return `http://${telemetry.ip}:81/stream`
-    }
-
-    return null
-}
+export const resolveMjpegUrl = resolveCameraStreamUrl
 
 const reasonFor = (url, isConnected, lost) => {
-    if (lost) return "Stream lost — reconnecting…"
+    if (lost) return "Stream lost — reconnecting to relay…"
     if (url) return null
-    if (!isConnected) return "Waiting for MQTT…"
-    return "Camera not yet announced (no mjpeg_url in config)"
+    if (!isConnected) return "Waiting for MQTT connection to Pi…"
+    return "Camera stream not yet available"
 }
 
 const CameraView = ({ config, telemetry, isConnected }) => {
@@ -39,10 +18,9 @@ const CameraView = ({ config, telemetry, isConnected }) => {
     if (searchParamsRef.current === null && typeof window !== "undefined") {
         searchParamsRef.current = new URLSearchParams(window.location.search)
     }
-    const searchParams = searchParamsRef.current
 
     const url = useMemo(
-        () => resolveMjpegUrl(config, telemetry, searchParams),
+        () => resolveCameraStreamUrl(config, telemetry, searchParamsRef.current),
         [config, telemetry]
     )
 
@@ -53,7 +31,6 @@ const CameraView = ({ config, telemetry, isConnected }) => {
         setLost(false)
     }, [url])
 
-    // Auto-retry connection every 3 seconds if lost
     useEffect(() => {
         if (!lost) return
         const timer = setTimeout(() => {
@@ -63,22 +40,16 @@ const CameraView = ({ config, telemetry, isConnected }) => {
         return () => clearTimeout(timer)
     }, [lost])
 
-    const effectiveUrl = url
-    const showPlaceholder = !effectiveUrl || lost
-
-    const wrapperStyle = {
-        position: "absolute",
-        inset: 0,
-    }
+    const showPlaceholder = !url || lost
 
     return (
-        <div style={wrapperStyle} data-testid="camera-view">
+        <div style={{ position: "absolute", inset: 0 }} data-testid="camera-view">
             {showPlaceholder ? (
-                <OfflinePlaceholder reason={reasonFor(effectiveUrl, isConnected, lost)} />
+                <OfflinePlaceholder reason={reasonFor(url, isConnected, lost)} />
             ) : (
                 <StreamViewport
                     key={retryKey}
-                    url={effectiveUrl}
+                    url={url}
                     isConnected={isConnected}
                     onStatus={({ lost: isLost }) => setLost(isLost)}
                 />

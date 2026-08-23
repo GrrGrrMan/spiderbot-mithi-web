@@ -1,7 +1,7 @@
 // FILE: src/hooks/useCornerSnap.js
 import { useState, useRef, useEffect, useCallback } from "react"
 
-const DRAG_THRESHOLD = 5 // Minimum pixels moved to switch from click to drag
+const DRAG_THRESHOLD = 5
 
 export const useCornerSnap = ({
     boundary = "window",
@@ -15,7 +15,6 @@ export const useCornerSnap = ({
     const [activeCorner, setActiveCorner] = useState(defaultCorner)
     const [pos, setPos] = useState({ x: 0, y: 0 })
     
-    // Live reference prevents stale state closures during fast trackpad gestures
     const posRef = useRef(pos)
     posRef.current = pos
 
@@ -24,8 +23,8 @@ export const useCornerSnap = ({
     const hasMovedRef = useRef(false)
     const pointerIdRef = useRef(null)
     const dragRef = useRef({ startX: 0, startY: 0, initialX: 0, initialY: 0 })
+    const rafIdRef = useRef(null) // ◄ rAF Throttle
 
-    // Boundary resolver
     const getBounds = useCallback(() => {
         if (boundary === "parent" && elementRef.current) {
             const parent = elementRef.current.offsetParent || elementRef.current.parentElement
@@ -42,7 +41,6 @@ export const useCornerSnap = ({
         }
     }, [boundary])
 
-    // Corner coordinate generator
     const getCornerCoords = useCallback(
         (corner) => {
             const { width: bW, height: bH } = getBounds()
@@ -69,7 +67,6 @@ export const useCornerSnap = ({
         [getBounds, marginX, marginY, defaultWidth, defaultHeight]
     )
 
-    // Closest corner resolver
     const findClosestCorner = useCallback(
         (x, y) => {
             const { width: bW, height: bH } = getBounds()
@@ -119,10 +116,10 @@ export const useCornerSnap = ({
         return () => {
             if (ro) ro.disconnect()
             window.removeEventListener("resize", handleRealign)
+            if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current)
         }
     }, [boundary, handleRealign])
 
-    // ── 1. Pointer Down (Synchronously Capture Pointer) ──
     const handlePointerDown = useCallback((e) => {
         if (e.button !== 0 && e.pointerType === "mouse") return
 
@@ -137,13 +134,11 @@ export const useCornerSnap = ({
             initialY: posRef.current.y,
         }
 
-        // Must capture on pointerdown so fast trackpad movement never escapes the element
         try {
             e.currentTarget.setPointerCapture(e.pointerId)
         } catch (_) {}
     }, [])
 
-    // ── 2. Pointer Move (Threshold Gated) ──
     const handlePointerMove = useCallback((e) => {
         if (!isDownRef.current) return
 
@@ -159,17 +154,26 @@ export const useCornerSnap = ({
             }
         }
 
-        // Update position freely without boundary lock while dragging
-        setPos({
-            x: dragRef.current.initialX + dx,
-            y: dragRef.current.initialY + dy,
-        })
+        const nextX = dragRef.current.initialX + dx
+        const nextY = dragRef.current.initialY + dy
+
+        // Batch coordinate updates to match the display refresh rate (60/120 FPS)
+        if (!rafIdRef.current) {
+            rafIdRef.current = requestAnimationFrame(() => {
+                rafIdRef.current = null
+                setPos({ x: nextX, y: nextY })
+            })
+        }
     }, [])
 
-    // ── 3. Pointer Up (Release & Snap) ──
     const handlePointerUp = useCallback((e) => {
         if (!isDownRef.current) return
         isDownRef.current = false
+
+        if (rafIdRef.current) {
+            cancelAnimationFrame(rafIdRef.current)
+            rafIdRef.current = null
+        }
 
         if (pointerIdRef.current !== null) {
             try {
@@ -183,8 +187,6 @@ export const useCornerSnap = ({
         if (hasMovedRef.current) {
             setIsDragging(false)
             snapToCorner(posRef.current.x, posRef.current.y)
-
-            // Block any trailing synthetic click event from firing after a drag
             setTimeout(() => {
                 hasMovedRef.current = false
             }, 50)
@@ -194,7 +196,6 @@ export const useCornerSnap = ({
         }
     }, [snapToCorner])
 
-    // ── 4. Cancel Guard ──
     const handlePointerCancel = useCallback((e) => {
         if (isDownRef.current) {
             handlePointerUp(e)

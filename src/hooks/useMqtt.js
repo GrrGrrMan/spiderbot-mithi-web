@@ -1,52 +1,25 @@
 // web-ui/src/hooks/useMqtt.js
 import { useState, useEffect, useCallback, useRef } from "react"
 import mqtt from "mqtt"
-
-const getBrokerUrl = () => {
-    const params = new URLSearchParams(window.location.search)
-    const queryBroker = params.get("broker")
-
-    const isHttps = window.location.protocol === "https:"
-    const wsScheme = isHttps ? "wss" : "ws"
-    const wsPort = isHttps ? "9443" : "9001"
-
-    // 1. Explicit query override: ?broker=192.168.1.50
-    if (queryBroker) {
-        return `${wsScheme}://${queryBroker}:${wsPort}`
-    }
-
-    // 2. Local dev server on PC pointing to Pi on mDNS/hotspot
-    const hostname = window.location.hostname
-    if (hostname === "localhost" || hostname === "127.0.0.1") {
-        return "ws://spider-w.local:9001" // or "ws://192.168.4.1:9001"
-    }
-
-    // 3. Production build served from Pi Nginx (auto-resolves current Pi IP)
-    return `${wsScheme}://${hostname}:${wsPort}`
-}
-
-const resolveTopic = (topic, deviceId) => {
-    if (!topic || topic === "hexapod/cmd") {
-        return `hexapod/${deviceId}/cmd`
-    }
-    return topic
-}
+import { resolveMqttBrokerUrl } from "../utils/networkConfig"
 
 const getDeviceId = (defaultId = "hexapod-s3-01") => {
+    if (typeof window === "undefined") return defaultId
     const params = new URLSearchParams(window.location.search)
-    const queryDevice = params.get("device")
-    return queryDevice || defaultId
+    return params.get("device") || defaultId
 }
 
 const getCameraDeviceId = (defaultId = "hexapod-cam-01") => {
+    if (typeof window === "undefined") return defaultId
     const params = new URLSearchParams(window.location.search)
-    const queryCam = params.get("cam")
-    return queryCam || defaultId
+    return params.get("cam") || defaultId
 }
 
 export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
+    const searchParamsRef = useRef(typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null)
     const deviceId = deviceIdOverride || getDeviceId()
     const camDeviceId = getCameraDeviceId()
+
     const [isConnected, setIsConnected] = useState(false)
     const [telemetry, setTelemetry] = useState(null)
     const [logs, setLogs] = useState([])
@@ -62,22 +35,17 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
     const pendingPublishRef = useRef(null)
     const trailingTimerRef = useRef(null)
 
-    const clearLogs = useCallback(() => {
-        setLogs([])
-    }, [])
-
-    const clearAiMessages = useCallback(() => {
-        setAiMessages([])
-    }, [])
+    const clearLogs = useCallback(() => setLogs([]), [])
+    const clearAiMessages = useCallback(() => setAiMessages([]), [])
 
     useEffect(() => {
-        const resolvedUrl = brokerUrlOverride || getBrokerUrl()
-        console.log(`[MQTT WebUI] Attempting WebSocket connection to: ${resolvedUrl}`)
+        const resolvedUrl = brokerUrlOverride || resolveMqttBrokerUrl(searchParamsRef.current)
+        console.log(`[MQTT WebUI] Connecting to Pi Broker: ${resolvedUrl}`)
 
         const client = mqtt.connect(resolvedUrl, {
             clientId: `web-ui-${Math.random().toString(16).substr(2, 8)}`,
             clean: true,
-            reconnectPeriod: 5000,
+            reconnectPeriod: 4000,
         })
 
         client.on("connect", () => {
@@ -89,37 +57,33 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
             client.subscribe(`hexapod/${deviceId}/ai/status`)
             client.subscribe(`hexapod/${deviceId}/audio/status`)
 
-            if (camDeviceId && camDeviceId !== deviceId) {
+            if (camDeviceId) {
                 client.subscribe(`hexapod/${camDeviceId}/telemetry`)
                 client.subscribe(`hexapod/${camDeviceId}/config`)
             }
-            console.log(`[MQTT WebUI] Connected and subscribed to device: ${deviceId} (cam: ${camDeviceId})`)
+            console.log(`[MQTT WebUI] Subscribed to [${deviceId}] & [${camDeviceId}]`)
         })
 
-        client.on("close", () => {
-            setIsConnected(false)
-        })
+        client.on("close", () => setIsConnected(false))
+        client.on("error", (err) => console.warn("[MQTT WebUI] Error:", err))
 
         client.on("message", (topic, message) => {
             const payload = message.toString()
             const isCamTopic = camDeviceId && topic.startsWith(`hexapod/${camDeviceId}/`)
 
-            if (topic.endsWith("telemetry")) {
+            if (topic.endsWith("/telemetry")) {
                 try {
                     const parsed = JSON.parse(payload)
                     if (isCamTopic) {
                         setCamTelemetry(parsed)
                     } else {
                         setTelemetry(parsed)
-                        
-                        // Sync audio status from telemetry heartbeat if available
                         if (parsed.audio) {
                             setAudioStatus(prev => ({
                                 state: parsed.audio,
-                                action: (prev && prev.action) || "tts"
+                                action: prev?.action || "tts"
                             }))
                         }
-
                         if (parsed.pose && typeof window !== "undefined") {
                             window.dispatchEvent(
                                 new CustomEvent("hexapod-telemetry-frame", { detail: parsed.pose })
@@ -127,40 +91,36 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
                         }
                     }
                 } catch (e) {
-                    console.error("[MQTT WebUI] Telemetry parse error:", e)
+                    console.error("[MQTT WebUI] Telemetry JSON parse error:", e)
                 }
-            } else if (topic.endsWith("config")) {
+            } else if (topic.endsWith("/config")) {
                 try {
                     const parsed = JSON.parse(payload)
-                    if (isCamTopic) {
-                        setCamConfig(parsed)
-                    } else {
-                        setConfig(parsed)
-                    }
-                    console.log("[MQTT WebUI] Configuration handshake received:", payload)
+                    if (isCamTopic) setCamConfig(parsed)
+                    else setConfig(parsed)
                 } catch (e) {
-                    console.error("[MQTT WebUI] Config parse error:", e)
+                    console.error("[MQTT WebUI] Config JSON parse error:", e)
                 }
-            } else if (topic.endsWith("logs") && !isCamTopic) {
+            } else if (topic.endsWith("/logs") && !isCamTopic) {
                 setLogs(prev => [...prev.slice(-99), payload])
             } else if (topic.endsWith("/ai") && !isCamTopic) {
                 try {
                     const msg = JSON.parse(payload)
                     setAiMessages(prev => [...prev.slice(-199), msg])
                 } catch (e) {
-                    console.error("[MQTT WebUI] AI message parse error:", e)
+                    console.error("[MQTT WebUI] AI JSON parse error:", e)
                 }
-            } else if (topic.endsWith("ai/status") && !isCamTopic) {
+            } else if (topic.endsWith("/ai/status") && !isCamTopic) {
                 try {
                     setAiStatus(JSON.parse(payload))
                 } catch (e) {
-                    console.error("[MQTT WebUI] AI status parse error:", e)
+                    console.error("[MQTT WebUI] AI status JSON parse error:", e)
                 }
-            } else if (topic.endsWith("audio/status") && !isCamTopic) {
+            } else if (topic.endsWith("/audio/status") && !isCamTopic) {
                 try {
                     setAudioStatus(JSON.parse(payload))
                 } catch (e) {
-                    console.error("[MQTT WebUI] Audio status parse error:", e)
+                    console.error("[MQTT WebUI] Audio status JSON parse error:", e)
                 }
             }
         })
@@ -168,39 +128,33 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         clientRef.current = client
 
         return () => {
-            if (client) {
-                client.end()
-            }
+            if (client) client.end()
         }
     }, [brokerUrlOverride, deviceId, camDeviceId])
 
+    // Heartbeat Publisher to S3 Command Queue
     useEffect(() => {
         if (!isConnected || !clientRef.current) return
-
         const heartbeatInterval = setInterval(() => {
             const targetTopic = `hexapod/${deviceId}/cmd`
-            const payload = JSON.stringify({ type: "heartbeat" })
             try {
-                clientRef.current.publish(targetTopic, payload)
+                clientRef.current.publish(targetTopic, JSON.stringify({ type: "heartbeat" }))
             } catch (err) {
-                console.error("[MQTT WebUI] Heartbeat publish failed:", err)
+                console.error("[MQTT WebUI] Heartbeat error:", err)
             }
         }, 500)
-
-        return () => {
-            clearInterval(heartbeatInterval)
-        }
+        return () => clearInterval(heartbeatInterval)
     }, [isConnected, deviceId])
 
-    useEffect(() => {
-        return () => {
-            if (trailingTimerRef.current) clearTimeout(trailingTimerRef.current)
-        }
-    }, [])
+    const publishImmediate = useCallback((topic, payload) => {
+        if (!clientRef.current || !isConnected) return
+        const targetTopic = topic === "hexapod/cmd" ? `hexapod/${deviceId}/cmd` : topic
+        clientRef.current.publish(targetTopic, JSON.stringify(payload))
+    }, [isConnected, deviceId])
 
     const publishThrottled = useCallback((topic, payload) => {
         if (!clientRef.current || !isConnected) return
-        const targetTopic = resolveTopic(topic, deviceId)
+        const targetTopic = topic === "hexapod/cmd" ? `hexapod/${deviceId}/cmd` : topic
         const now = Date.now()
         const elapsed = now - lastPublishRef.current
 
@@ -228,44 +182,33 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         }
     }, [isConnected, deviceId])
 
-    const publishImmediate = useCallback((topic, payload) => {
+    const publishAi = useCallback((payload) => {
         if (!clientRef.current || !isConnected) return
-        const targetTopic = resolveTopic(topic, deviceId)
-        clientRef.current.publish(targetTopic, JSON.stringify(payload))
-        console.log(`[MQTT WebUI] Immediate Publish -> [${targetTopic}]:`, payload)
+        clientRef.current.publish(`hexapod/${deviceId}/ai`, JSON.stringify(payload))
     }, [isConnected, deviceId])
 
-    const publishAi = useCallback(payload => {
+    const publishAudio = useCallback((payload) => {
         if (!clientRef.current || !isConnected) return
-        const topic = `hexapod/${deviceId}/ai`
-        clientRef.current.publish(topic, JSON.stringify(payload))
-        console.log(`[MQTT WebUI] AI Publish -> [${topic}]:`, payload)
+        clientRef.current.publish(`hexapod/${deviceId}/audio`, JSON.stringify(payload))
     }, [isConnected, deviceId])
 
-    const publishAudio = useCallback(payload => {
-        if (!clientRef.current || !isConnected) return
-        const topic = `hexapod/${deviceId}/audio`
-        clientRef.current.publish(topic, JSON.stringify(payload))
-        console.log(`[MQTT WebUI] Audio Publish -> [${topic}]:`, payload)
-    }, [isConnected, deviceId])
-
-    return { 
-        isConnected, 
-        telemetry, 
-        logs, 
-        config, 
-        deviceId, 
-        camDeviceId, 
-        camTelemetry, 
-        camConfig, 
-        aiMessages, 
-        aiStatus, 
-        audioStatus, 
-        publishThrottled, 
-        publishImmediate, 
-        publishAi, 
-        publishAudio, 
-        clearLogs, 
-        clearAiMessages 
+    return {
+        isConnected,
+        telemetry,
+        logs,
+        config,
+        deviceId,
+        camDeviceId,
+        camTelemetry,
+        camConfig,
+        aiMessages,
+        aiStatus,
+        audioStatus,
+        publishThrottled,
+        publishImmediate,
+        publishAi,
+        publishAudio,
+        clearLogs,
+        clearAiMessages,
     }
 }
