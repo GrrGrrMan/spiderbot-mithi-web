@@ -2,7 +2,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react"
 import { SECTION_NAMES } from "../vars"
 import { useContinuousWakeWord } from "../../hooks/useContinuousWakeWord"
-import { useAiMotionExecutor } from "../../hooks/useAiMotionExecutor"
 import { resolveAction } from "../../utils/aiActionResolver"
 import DualStageViewport from "../camera/DualStageViewport"
 import { SentinelStatusCard } from "../ai/SentinelStatusCard"
@@ -13,9 +12,7 @@ const ACTIONS = AI_ACTIONS.actions
 const msgKey = m => `${m.role}|${m.type}|${m.content || m.action_id || m.action || ""}`
 
 const JudgementPanel = ({
-    publishImmediate = () => {},
     publishAi = () => {},
-    publishAudio = () => {},
     isConnected = false,
     camConfig = null,
     camTelemetry = null,
@@ -24,23 +21,14 @@ const JudgementPanel = ({
     aiStatus = null,
     audioStatus = null,
     aiMessages = [],
-    params = {},
-    onUpdate = () => {},
     onMount = () => {},
+    triggerAction = () => {},
 }) => {
     const [actionLog, setActionLog] = useState([])
     const lastDirectiveKeyRef = useRef(null)
     const lastProcessedMsgRef = useRef(null)
 
     const aiOnline = Boolean(aiStatus && aiStatus.state !== "offline" && aiStatus.state !== "error")
-
-    // 1. Shared Kinematics & Motion Executor
-    const { triggerAction } = useAiMotionExecutor({
-        params,
-        publishImmediate,
-        publishAudio,
-        onUpdate,
-    })
 
     const speakFeedback = useCallback(text => {
         if (!aiOnline && "speechSynthesis" in window) {
@@ -52,7 +40,6 @@ const JudgementPanel = ({
         }
     }, [aiOnline])
 
-    // 2. 24/7 Wake-Word Voice Command Handler
     const handleVoiceCommand = useCallback(
         (commandText, fullUtterance) => {
             const entry = {
@@ -63,7 +50,6 @@ const JudgementPanel = ({
             }
             setActionLog(prev => [entry, ...prev.slice(0, 20)])
 
-            // Online: Route to Pi-Hub (Pi-Hub pipeline manages intent, LLM ordering, and timing)
             if (aiOnline) {
                 publishAi({
                     type: "text",
@@ -73,7 +59,6 @@ const JudgementPanel = ({
                 return
             }
 
-            // Offline Fallback
             const matchedAction = matchAction(commandText, ACTIONS)
             if (matchedAction) {
                 speakFeedback(matchedAction.reply || `Executing ${matchedAction.name}`)
@@ -85,8 +70,6 @@ const JudgementPanel = ({
         [aiOnline, publishAi, triggerAction, speakFeedback]
     )
 
-    // 3. Watch for assistant directives arriving from RPi
-    // Pi-Hub pipeline authoritatively manages timing; JudgementPanel executes directives immediately.
     useEffect(() => {
         if (!aiMessages || !aiMessages.length) return
         const last = aiMessages[aiMessages.length - 1]
@@ -102,7 +85,6 @@ const JudgementPanel = ({
         if (a) triggerAction(a, last.joint_params)
     }, [aiMessages, triggerAction])
 
-    // 4. Initialize continuous wake-word sentinel
     const { isListening, wakeWordState, lastTranscript, lastAcceptedCommand, micError, filterAndDispatch } =
         useContinuousWakeWord({
             onCommand: handleVoiceCommand,
@@ -112,7 +94,6 @@ const JudgementPanel = ({
             enabled: true,
         })
 
-    // 5. Bridge incoming RPi Whisper STT transcriptions to the wake-word sentinel
     useEffect(() => {
         if (!aiMessages || !aiMessages.length) return
         const lastMsg = aiMessages[aiMessages.length - 1]
@@ -127,12 +108,10 @@ const JudgementPanel = ({
 
     useEffect(() => {
         onMount(SECTION_NAMES.judgement || "Judgement")
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+    }, [onMount])
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: "12px", width: "100%" }}>
-            {/* Camera & 3D Telemetry Canvas */}
             <div style={{ height: "460px", width: "100%" }}>
                 <DualStageViewport
                     camConfig={camConfig}
@@ -143,7 +122,6 @@ const JudgementPanel = ({
                 />
             </div>
 
-            {/* 24/7 Passive Wake-Word Sentinel Status & History */}
             <SentinelStatusCard
                 wakeWordState={wakeWordState}
                 isListening={isListening}

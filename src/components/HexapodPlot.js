@@ -15,6 +15,10 @@ class HexapodPlot extends React.Component {
     containerRef = null
     latestGhostPose = null
     isPlotDragging = false
+    
+    // Add guards for telemetry background execution
+    pendingTelemetryPose = null
+    telemetryRafId = null
 
     shouldComponentUpdate(nextProps, nextState) {
         return (
@@ -38,7 +42,6 @@ class HexapodPlot extends React.Component {
         window.addEventListener("hexapod-anim-frame", this.handleAnimFrame)
         window.addEventListener("hexapod-telemetry-frame", this.handleTelemetryFrame)
 
-        // ── Seamless Camera Orbit & Boundary Guard ──
         window.addEventListener("pointerdown", this.handleGlobalPointerDown, true)
         window.addEventListener("pointerup", this.handleGlobalPointerUp, true)
         window.addEventListener("pointercancel", this.handleGlobalPointerUp, true)
@@ -51,16 +54,18 @@ class HexapodPlot extends React.Component {
         window.removeEventListener("pointerdown", this.handleGlobalPointerDown, true)
         window.removeEventListener("pointerup", this.handleGlobalPointerUp, true)
         window.removeEventListener("pointercancel", this.handleGlobalPointerUp, true)
+        
+        if (this.telemetryRafId) {
+            cancelAnimationFrame(this.telemetryRafId)
+        }
     }
 
     handleGlobalPointerDown = (e) => {
         const container = this.containerRef || this.graphDiv
         if (!container) return
-
         const isInside = container.contains(e.target)
 
         if (isInside) {
-            // 1. Started INSIDE: Capture pointer so camera continues orbiting even if mouse exits borders
             this.isPlotDragging = true
             container.style.pointerEvents = "auto"
             try {
@@ -70,7 +75,6 @@ class HexapodPlot extends React.Component {
                 }
             } catch (_) {}
         } else {
-            // 2. Started OUTSIDE: Mute plot pointer events so sweeping into the plot doesn't trigger camera
             this.isPlotDragging = false
             container.style.pointerEvents = "none"
         }
@@ -105,7 +109,6 @@ class HexapodPlot extends React.Component {
             let animHexapod = new VirtualHexapod(dimensions, pose, { wontRotate: true })
             if (!animHexapod || !animHexapod.body || !animHexapod.foundSolution) return
             
-            // Apply 3D body heading twist if frame specifies rotation angle (turning/spinning)
             if (typeof detail.twist === "number" && detail.twist !== 0) {
                 const matrix = tRotZmatrix(detail.twist)
                 animHexapod = animHexapod.cloneTrot(matrix)
@@ -123,20 +126,30 @@ class HexapodPlot extends React.Component {
     handleTelemetryFrame = (e) => {
         if (!this.Plotly || !this.Plotly.restyle || !this.graphDiv || !this.props.hexapod) return
 
-        const pose = e.detail
-        if (!pose || typeof pose !== "object") return
-        this.latestGhostPose = pose
-        const dimensions = this.props.hexapod.dimensions
-        if (!dimensions) return
+        this.pendingTelemetryPose = e.detail
+        
+        // Guard against invisible WebGL enqueueing crashing the browser out-of-tab
+        if (!this.telemetryRafId) {
+            this.telemetryRafId = requestAnimationFrame(() => {
+                this.telemetryRafId = null
+                
+                const pose = this.pendingTelemetryPose
+                if (!pose || typeof pose !== "object") return
+                
+                this.latestGhostPose = pose
+                const dimensions = this.props.hexapod.dimensions
+                if (!dimensions) return
 
-        try {
-            const ghostHexapod = new VirtualHexapod(dimensions, pose, { wontRotate: true })
-            if (!ghostHexapod || !ghostHexapod.body || !ghostHexapod.foundSolution) return
+                try {
+                    const ghostHexapod = new VirtualHexapod(dimensions, pose, { wontRotate: true })
+                    if (!ghostHexapod || !ghostHexapod.body || !ghostHexapod.foundSolution) return
 
-            const { update, indices } = getGhostTraceUpdates(ghostHexapod)
-            this.Plotly.restyle(this.graphDiv, update, indices)
-        } catch (err) {
-            console.warn("[HexapodPlot] Error applying telemetry frame:", err)
+                    const { update, indices } = getGhostTraceUpdates(ghostHexapod)
+                    this.Plotly.restyle(this.graphDiv, update, indices)
+                } catch (err) {
+                    console.warn("[HexapodPlot] Error applying telemetry frame:", err)
+                }
+            })
         }
     }
 

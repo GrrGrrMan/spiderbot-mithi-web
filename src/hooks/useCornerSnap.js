@@ -1,4 +1,4 @@
-// FILE: src/hooks/useCornerSnap.js
+// web-ui/src/hooks/useCornerSnap.js
 import { useState, useRef, useEffect, useCallback } from "react"
 
 const DRAG_THRESHOLD = 5
@@ -14,7 +14,7 @@ export const useCornerSnap = ({
     const elementRef = useRef(null)
     const [activeCorner, setActiveCorner] = useState(defaultCorner)
     const [pos, setPos] = useState({ x: 0, y: 0 })
-    
+
     const posRef = useRef(pos)
     posRef.current = pos
 
@@ -22,8 +22,18 @@ export const useCornerSnap = ({
     const isDownRef = useRef(false)
     const hasMovedRef = useRef(false)
     const pointerIdRef = useRef(null)
-    const dragRef = useRef({ startX: 0, startY: 0, initialX: 0, initialY: 0 })
-    const rafIdRef = useRef(null) // ◄ rAF Throttle
+    const targetPosRef = useRef({ x: 0, y: 0 })
+
+    const dragRef = useRef({
+        startX: 0,
+        startY: 0,
+        initialX: 0,
+        initialY: 0,
+        bW: 800,
+        bH: 600,
+        itemW: defaultWidth,
+        itemH: defaultHeight,
+    })
 
     const getBounds = useCallback(() => {
         if (boundary === "parent" && elementRef.current) {
@@ -42,10 +52,11 @@ export const useCornerSnap = ({
     }, [boundary])
 
     const getCornerCoords = useCallback(
-        (corner) => {
-            const { width: bW, height: bH } = getBounds()
-            const itemW = elementRef.current?.offsetWidth || defaultWidth
-            const itemH = elementRef.current?.offsetHeight || defaultHeight
+        (corner, customBounds = null) => {
+            const bW = customBounds ? customBounds.bW : getBounds().width
+            const bH = customBounds ? customBounds.bH : getBounds().height
+            const itemW = customBounds ? customBounds.itemW : (elementRef.current?.offsetWidth || defaultWidth)
+            const itemH = customBounds ? customBounds.itemH : (elementRef.current?.offsetHeight || defaultHeight)
 
             const leftX = marginX
             const rightX = Math.max(marginX, bW - itemW - marginX)
@@ -68,10 +79,11 @@ export const useCornerSnap = ({
     )
 
     const findClosestCorner = useCallback(
-        (x, y) => {
-            const { width: bW, height: bH } = getBounds()
-            const itemW = elementRef.current?.offsetWidth || defaultWidth
-            const itemH = elementRef.current?.offsetHeight || defaultHeight
+        (x, y, customBounds = null) => {
+            const bW = customBounds ? customBounds.bW : getBounds().width
+            const bH = customBounds ? customBounds.bH : getBounds().height
+            const itemW = customBounds ? customBounds.itemW : (elementRef.current?.offsetWidth || defaultWidth)
+            const itemH = customBounds ? customBounds.itemH : (elementRef.current?.offsetHeight || defaultHeight)
 
             const centerX = x + itemW / 2
             const centerY = y + itemH / 2
@@ -88,16 +100,26 @@ export const useCornerSnap = ({
     )
 
     const snapToCorner = useCallback(
-        (currentX, currentY) => {
-            const targetCorner = findClosestCorner(currentX, currentY)
+        (currentX, currentY, customBounds = null) => {
+            const targetCorner = findClosestCorner(currentX, currentY, customBounds)
             setActiveCorner(targetCorner)
-            setPos(getCornerCoords(targetCorner))
+            const coords = getCornerCoords(targetCorner, customBounds)
+            setPos(coords)
+            if (elementRef.current) {
+                elementRef.current.style.left = `${coords.x}px`
+                elementRef.current.style.top = `${coords.y}px`
+            }
         },
         [findClosestCorner, getCornerCoords]
     )
 
     const handleRealign = useCallback(() => {
-        setPos(getCornerCoords(activeCorner))
+        const coords = getCornerCoords(activeCorner)
+        setPos(coords)
+        if (elementRef.current) {
+            elementRef.current.style.left = `${coords.x}px`
+            elementRef.current.style.top = `${coords.y}px`
+        }
     }, [activeCorner, getCornerCoords])
 
     useEffect(() => {
@@ -116,7 +138,6 @@ export const useCornerSnap = ({
         return () => {
             if (ro) ro.disconnect()
             window.removeEventListener("resize", handleRealign)
-            if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current)
         }
     }, [boundary, handleRealign])
 
@@ -127,23 +148,32 @@ export const useCornerSnap = ({
         hasMovedRef.current = false
         pointerIdRef.current = e.pointerId
 
+        const bounds = getBounds()
+        const el = elementRef.current
+
         dragRef.current = {
             startX: e.clientX,
             startY: e.clientY,
             initialX: posRef.current.x,
             initialY: posRef.current.y,
+            bW: bounds.width,
+            bH: bounds.height,
+            itemW: el ? el.offsetWidth : defaultWidth,
+            itemH: el ? el.offsetHeight : defaultHeight,
         }
+        targetPosRef.current = { x: posRef.current.x, y: posRef.current.y }
 
         try {
             e.currentTarget.setPointerCapture(e.pointerId)
         } catch (_) {}
-    }, [])
+    }, [getBounds, defaultWidth, defaultHeight])
 
     const handlePointerMove = useCallback((e) => {
         if (!isDownRef.current) return
 
-        const dx = e.clientX - dragRef.current.startX
-        const dy = e.clientY - dragRef.current.startY
+        const { startX, startY, initialX, initialY } = dragRef.current
+        const dx = e.clientX - startX
+        const dy = e.clientY - startY
 
         if (!hasMovedRef.current) {
             if (Math.hypot(dx, dy) >= DRAG_THRESHOLD) {
@@ -154,26 +184,19 @@ export const useCornerSnap = ({
             }
         }
 
-        const nextX = dragRef.current.initialX + dx
-        const nextY = dragRef.current.initialY + dy
+        const nextX = initialX + dx
+        const nextY = initialY + dy
+        targetPosRef.current = { x: nextX, y: nextY }
 
-        // Batch coordinate updates to match the display refresh rate (60/120 FPS)
-        if (!rafIdRef.current) {
-            rafIdRef.current = requestAnimationFrame(() => {
-                rafIdRef.current = null
-                setPos({ x: nextX, y: nextY })
-            })
+        if (elementRef.current) {
+            elementRef.current.style.left = `${nextX}px`
+            elementRef.current.style.top = `${nextY}px`
         }
     }, [])
 
     const handlePointerUp = useCallback((e) => {
         if (!isDownRef.current) return
         isDownRef.current = false
-
-        if (rafIdRef.current) {
-            cancelAnimationFrame(rafIdRef.current)
-            rafIdRef.current = null
-        }
 
         if (pointerIdRef.current !== null) {
             try {
@@ -186,7 +209,7 @@ export const useCornerSnap = ({
 
         if (hasMovedRef.current) {
             setIsDragging(false)
-            snapToCorner(posRef.current.x, posRef.current.y)
+            snapToCorner(targetPosRef.current.x, targetPosRef.current.y, dragRef.current)
             setTimeout(() => {
                 hasMovedRef.current = false
             }, 50)

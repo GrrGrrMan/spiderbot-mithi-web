@@ -1,95 +1,192 @@
 // web-ui/src/hooks/useAiChat.js
-import { useState, useEffect, useRef, useCallback } from "react"
-import AI_ACTIONS from "../constants/aiActions.json"
-import { resolveAction } from "../utils/aiActionResolver"
-import { matchAction } from "../utils/aiActionMatcher"
+import { useState, useEffect, useCallback, useRef } from "react"
+import aiActionsData from "../constants/aiActions.json"
 import { useVoiceRecorder } from "./useVoiceRecorder"
 
-const ACTIONS = AI_ACTIONS.actions
-const msgKey = m => `${m.role}|${m.type}|${m.content || m.action_id || ""}`
+const STATIC_ACTIONS = aiActionsData.actions || []
 
-export const useAiChat = ({ aiMessages = [], aiStatus, publishAi, triggerAction }) => {
+export const useAiChat = ({
+    aiMessages = [],
+    aiStatus = null,
+    publishAi = () => {},
+    publishAiConfig = () => {},
+    triggerAction = () => {},
+}) => {
     const [messages, setMessages] = useState([])
     const [input, setInput] = useState("")
-    const lastDirectiveKeyRef = useRef(null)
-    const aiOnline = Boolean(aiStatus && aiStatus.state !== "offline" && aiStatus.state !== "error")
 
-    const push = useCallback((role, content, type = "text") => {
-        setMessages(prev => [...prev, { role, type, content, ts: Date.now() }])
-    }, [])
+    // ── Persistent Task & Thinking States ──
+    const [taskStatus, setTaskStatus] = useState("idle")
+    const [isThinking, setIsThinking] = useState(false)
+    const [thoughtText, setThoughtText] = useState("")
+    const [thoughtTps, setThoughtTps] = useState(null)
+    const [thoughtElapsed, setThoughtElapsed] = useState(0)
+    const [currentPlan, setCurrentPlan] = useState(null)
+    const [activeStepIndex, setActiveStepIndex] = useState(0)
 
-    const getCleanHistory = useCallback(() => {
-        return messages
-            .filter(m => (m.role === "user" || m.role === "assistant") && m.type !== "audio" && m.type !== "directive")
-            .filter(m => typeof m.content === "string" && !m.content.startsWith("🎤 Voice Query") && m.content.length < 500)
-            .slice(-10)
-            .map(m => ({ role: m.role, content: m.content }))
-    }, [messages])
+    // ── Collapsible Settings Drawer State ──
+    const [isConfigOpen, setIsConfigOpen] = useState(false)
 
-    // Voice Recorder
-    const handleAudioRecorded = useCallback(({ base64Wav, durationMs }) => {
-        push("user", `🎤 Voice Query (${durationMs}ms audio)`)
-        if (aiOnline) {
-            publishAi({ type: "audio", role: "user", content: base64Wav, sample_rate_hz: 16000, history: getCleanHistory() })
-        } else {
-            push("system", "AI Service Offline: Voice transcription requires live bridge.")
-        }
-    }, [push, aiOnline, publishAi, getCleanHistory])
+    const aiOnline = Boolean(aiStatus && aiStatus.state !== "offline")
+
+    const triggerActionRef = useRef(triggerAction)
+    useEffect(() => {
+        triggerActionRef.current = triggerAction
+    }, [triggerAction])
+
+    const aiOnlineRef = useRef(aiOnline)
+    aiOnlineRef.current = aiOnline
+
+    const publishAiRef = useRef(publishAi)
+    publishAiRef.current = publishAi
 
     const { recording, micBlocked, startMic, stopMic } = useVoiceRecorder({
-        onAudioRecorded: handleAudioRecorded,
+        onAudioRecorded: useCallback(({ base64Wav, durationMs }) => {
+            if (aiOnlineRef.current) {
+                publishAiRef.current({
+                    type: "audio",
+                    role: "user",
+                    content: base64Wav,
+                    sample_rate_hz: 16000,
+                })
+            }
+        }, [])
     })
 
-    // Directive Listener
+    // Stopwatch for reasoning & active navigation
     useEffect(() => {
-        if (!aiMessages?.length) return
-        const last = aiMessages[aiMessages.length - 1]
-        if (!last || (last.type !== "directive" && !last.action_id && !last.action && !last.joint_params)) return
+        let timer = null
+        if (isThinking) {
+            setThoughtElapsed(0)
+            const startTime = performance.now()
+            timer = setInterval(() => {
+                setThoughtElapsed((performance.now() - startTime) / 1000)
+            }, 100)
+        }
+        return () => {
+            if (timer) clearInterval(timer)
+        }
+    }, [isThinking])
 
-        const key = `${aiMessages.length}|${msgKey(last)}`
-        if (lastDirectiveKeyRef.current === key) return
-        lastDirectiveKeyRef.current = key
-
-        const a = resolveAction(last, ACTIONS)
-        if (a) triggerAction(a, last.joint_params)
-    }, [aiMessages, triggerAction])
-
-    // Incoming Message Sync
+    // Process MQTT stream with duplicate protection
     useEffect(() => {
-        if (!aiMessages?.length) return
-        setMessages(prev => {
-            const seen = new Set(prev.map(msgKey))
-            const added = aiMessages
-                .filter(m => m.type !== "audio" && m.type !== "directive" && typeof m.content === "string" && m.content.length < 1000)
-                .filter(m => !seen.has(msgKey(m)))
-            return added.length ? [...prev, ...added] : prev
-        })
+        if (!aiMessages || aiMessages.length === 0) return
+        const lastMsg = aiMessages[aiMessages.length - 1]
+        if (!lastMsg) return
+
+        if (lastMsg.type === "agent_event") {
+            if (lastMsg.stage === "thinking" || lastMsg.stage === "tool_executing") {
+                setTaskStatus("running")
+                setIsThinking(true)
+                if (lastMsg.thought) setThoughtText(lastMsg.thought)
+            } else if (lastMsg.stage === "thought_chunk") {
+                setTaskStatus("running")
+                setIsThinking(true)
+                if (lastMsg.thought) setThoughtText(lastMsg.thought)
+                if (lastMsg.tps) setThoughtTps(lastMsg.tps)
+            } else if (lastMsg.stage === "plan") {
+                setTaskStatus("running")
+                setCurrentPlan({
+                    title: lastMsg.title || "Visual Target Search",
+                    thought: lastMsg.thought || "",
+                    steps: lastMsg.steps || [],
+                })
+                setActiveStepIndex(lastMsg.active_step || 0)
+                if (lastMsg.thought) setThoughtText(lastMsg.thought)
+            } else if (lastMsg.stage === "step_progress") {
+                setTaskStatus("running")
+                if (lastMsg.active_step !== undefined) setActiveStepIndex(lastMsg.active_step)
+                if (lastMsg.thought) setThoughtText(lastMsg.thought)
+                if (lastMsg.steps && lastMsg.steps.length > 0) {
+                    setCurrentPlan(prev => ({
+                        title: prev?.title || "Visual Target Search",
+                        thought: lastMsg.thought || prev?.thought || "",
+                        steps: lastMsg.steps,
+                    }))
+                }
+            } else if (lastMsg.stage === "done") {
+                setIsThinking(false)
+                setTaskStatus("completed")
+                setCurrentPlan(prev => {
+                    if (!prev) return null
+                    setActiveStepIndex(prev.steps?.length || 0)
+                    return { ...prev }
+                })
+            }
+            return
+        }
+
+        if (lastMsg.type === "directive" && lastMsg.action_id) {
+            const matched = STATIC_ACTIONS.find(a => a.id === lastMsg.action_id)
+            if (matched && triggerActionRef.current) {
+                triggerActionRef.current(matched)
+            }
+            return
+        }
+
+        if (lastMsg.type === "text" || lastMsg.type === "transcription") {
+            setMessages(prev => {
+                // Robust multi-factor deduplication
+                const exists = prev.some(m =>
+                    (m.timestamp && m.timestamp === lastMsg.timestamp) ||
+                    (m.role === lastMsg.role && m.content === lastMsg.content && Math.abs((m.timestamp || 0) - (lastMsg.timestamp || 0)) < 1500)
+                )
+                if (exists) return prev
+                return [...prev.slice(-49), lastMsg]
+            })
+            if (lastMsg.role === "assistant") {
+                setIsThinking(false)
+                setTaskStatus(prev => (prev === "running" ? "completed" : prev))
+            }
+        }
     }, [aiMessages])
 
     const handleSend = useCallback(() => {
         const text = input.trim()
         if (!text) return
-        push("user", text, "text")
+
+        const singleTimestamp = Date.now()
+        const userMsg = {
+            type: "text",
+            role: "user",
+            content: text,
+            timestamp: singleTimestamp,
+        }
+        setMessages(prev => [...prev.slice(-49), userMsg])
+
+        setTaskStatus("running")
+        setIsThinking(true)
+        setThoughtText("Deliberating goal & kinematics...")
+        setCurrentPlan(null)
+
+        publishAi({
+            type: "text",
+            role: "user",
+            content: text,
+            history: messages.slice(-10),
+            timestamp: singleTimestamp,
+        })
         setInput("")
+    }, [input, messages, publishAi])
 
-        if (aiOnline) {
-            publishAi({ type: "text", role: "user", content: text, history: getCleanHistory() })
-            return
+    const handleExecuteAction = useCallback((action) => {
+        if (!action) return
+        if (triggerActionRef.current) triggerActionRef.current(action)
+
+        const userMsg = {
+            type: "text",
+            role: "user",
+            content: `[Manual Card]: ${action.name}`,
+            timestamp: Date.now(),
         }
+        setMessages(prev => [...prev.slice(-49), userMsg])
+    }, [])
 
-        const action = matchAction(text, ACTIONS)
-        if (action) {
-            triggerAction(action)
-            push("assistant", action.reply || `Triggered action: ${action.name}`)
-        } else {
-            push("system", "AI Service Offline: Direct keyword not recognized.")
+    const handleUpdateConfig = useCallback((updatedConfig) => {
+        if (publishAiConfig) {
+            publishAiConfig(updatedConfig)
         }
-    }, [input, aiOnline, publishAi, push, triggerAction, getCleanHistory])
-
-    const handleExecuteAction = useCallback(action => {
-        triggerAction(action)
-        push("assistant", action.reply || `Triggered action: ${action.name}`)
-    }, [triggerAction, push])
+    }, [publishAiConfig])
 
     return {
         messages,
@@ -97,12 +194,24 @@ export const useAiChat = ({ aiMessages = [], aiStatus, publishAi, triggerAction 
         input,
         setInput,
         handleSend,
-        handleExecuteAction,
         recording,
-        micBlocked,
         startMic,
         stopMic,
+        micBlocked,
         aiOnline,
-        ACTIONS,
+        ACTIONS: STATIC_ACTIONS,
+        handleExecuteAction,
+        taskStatus,
+        isThinking,
+        thoughtText,
+        thoughtTps,
+        thoughtElapsed,
+        currentPlan,
+        activeStepIndex,
+        isConfigOpen,
+        setIsConfigOpen,
+        handleUpdateConfig,
     }
 }
+
+export default useAiChat

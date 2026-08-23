@@ -1,9 +1,7 @@
-// FILE: src/components/ai/AiChatOverlay.js
+// web-ui/src/components/ai/AiChatOverlay.js
 import React, { useState, useCallback } from "react"
 import { FaRobot, FaTerminal } from "react-icons/fa"
 import { useDraggableModal } from "../../hooks/useDraggableModal"
-import { useAiMotionExecutor } from "../../hooks/useAiMotionExecutor"
-import { useAiChat } from "../../hooks/useAiChat"
 import { HubFab } from "../hub/HubFab"
 import { HubHeader } from "../hub/HubHeader"
 import { HubAiView } from "../hub/HubAiView"
@@ -18,18 +16,16 @@ export const AiChatOverlay = ({
     isOpen,
     onToggle,
     publishImmediate = () => {},
-    publishAi = () => {},
-    publishAudio = () => {},
-    aiMessages = [],
     aiStatus = null,
     audioStatus = null,
     isConnected = false,
     clearAiMessages = () => {},
-    params = {},
-    onUpdate = () => {},
     logs = [],
     clearLogs = () => {},
     telemetry = null,
+    aiChat,
+    activeExecutingAction,
+    stopAll,
 }) => {
     const [activeTab, setActiveTab] = useState("ai")
     const [isMenuOpen, setIsMenuOpen] = useState(false)
@@ -42,7 +38,6 @@ export const AiChatOverlay = ({
         publishImmediate("hexapod/cmd", { type: "system", power: next })
     }, [isAwake, publishImmediate])
 
-    // Permissive Window Drag & Auto-Recovery Hook
     const {
         position,
         isDragging,
@@ -54,16 +49,6 @@ export const AiChatOverlay = ({
         handlePointerUp,
         handlePointerCancel,
     } = useDraggableModal(20, 75)
-
-    const { activeExecutingAction, triggerAction, stopAll } = useAiMotionExecutor({
-        params,
-        publishImmediate,
-        publishAudio,
-        onUpdate,
-    })
-
-    const { messages, setMessages, input, setInput, handleSend, handleExecuteAction, recording, micBlocked, startMic, stopMic, aiOnline, ACTIONS } =
-        useAiChat({ aiMessages, aiStatus, publishAi, triggerAction })
 
     const activeConfig = TAB_CONFIG.find(t => t.id === activeTab) || TAB_CONFIG[0]
 
@@ -89,13 +74,15 @@ export const AiChatOverlay = ({
                         borderRadius: "10px",
                         padding: "10px 12px",
                         boxShadow: isDragging
-                            ? "0 16px 40px rgba(0, 0, 0, 0.85), 0 0 25px rgba(50, 255, 126, 0.3)"
+                            ? "0 18px 45px rgba(0, 0, 0, 0.85), 0 0 25px rgba(50, 255, 126, 0.35)"
                             : "0 12px 36px rgba(0, 0, 0, 0.75), 0 0 18px rgba(41, 128, 185, 0.3)",
                         userSelect: isDragging ? "none" : "auto",
-                        // Zero lag during drag; spring recovery when dropped out-of-bounds
+                        touchAction: "none",
+                        willChange: isDragging ? "left, top" : "auto",
+                        // ── Instant 0ms response during drag; smooth magnetic spring on release ──
                         transition: isDragging
                             ? "none"
-                            : "left 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), top 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s, border-color 0.2s",
+                            : "left 0.32s cubic-bezier(0.34, 1.56, 0.64, 1), top 0.32s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, border-color 0.2s ease",
                     }}
                     onClick={() => isMenuOpen && setIsMenuOpen(false)}
                 >
@@ -109,7 +96,9 @@ export const AiChatOverlay = ({
                         activeExecutingAction={activeExecutingAction}
                         onClear={() => {
                             if (activeTab === "ai") {
-                                setMessages([])
+                                if (aiChat && aiChat.setMessages) {
+                                    aiChat.setMessages([])
+                                }
                                 clearAiMessages()
                             } else {
                                 clearLogs()
@@ -130,21 +119,30 @@ export const AiChatOverlay = ({
                         <div className="no-drag" style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "10px" }}>
                             {activeTab === "ai" ? (
                                 <HubAiView
-                                    aiOnline={aiOnline}
+                                    aiOnline={aiChat?.aiOnline}
                                     aiStatus={aiStatus}
                                     audioStatus={audioStatus}
                                     isConnected={isConnected}
-                                    messages={messages}
-                                    input={input}
-                                    setInput={setInput}
-                                    onSend={handleSend}
-                                    recording={recording}
-                                    onToggleMic={recording ? stopMic : startMic}
-                                    micBlocked={micBlocked}
-                                    actions={ACTIONS}
+                                    messages={aiChat?.messages || []}
+                                    input={aiChat?.input || ""}
+                                    setInput={aiChat?.setInput}
+                                    onSend={aiChat?.handleSend}
+                                    recording={aiChat?.recording}
+                                    onToggleMic={aiChat?.recording ? aiChat?.stopMic : aiChat?.startMic}
+                                    micBlocked={aiChat?.micBlocked}
+                                    actions={aiChat?.ACTIONS || []}
                                     activeExecutingAction={activeExecutingAction}
-                                    onExecuteAction={handleExecuteAction}
+                                    onExecuteAction={aiChat?.handleExecuteAction}
                                     onStopAll={stopAll}
+                                    isThinking={aiChat?.isThinking}
+                                    thoughtText={aiChat?.thoughtText}
+                                    thoughtTps={aiChat?.thoughtTps}
+                                    thoughtElapsed={aiChat?.thoughtElapsed}
+                                    currentPlan={aiChat?.currentPlan}
+                                    activeStepIndex={aiChat?.activeStepIndex}
+                                    isConfigOpen={aiChat?.isConfigOpen}
+                                    setIsConfigOpen={aiChat?.setIsConfigOpen}
+                                    onUpdateConfig={aiChat?.handleUpdateConfig}
                                 />
                             ) : (
                                 <HubSystemView

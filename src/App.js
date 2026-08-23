@@ -1,7 +1,7 @@
 // web-ui/src/App.js
 import React, { useState, useEffect, useCallback } from "react"
 import { BrowserRouter as Router, useLocation } from "react-router-dom"
-import { DEFAULT_POSE, DEFAULT_DIMENSIONS } from "./templates"
+import { DEFAULT_POSE } from "./templates"
 import { SECTION_NAMES } from "./components/vars"
 import { Nav, NavDetailed, DimensionsWidget } from "./components"
 import { updateHexapod, Page } from "./AppHelpers"
@@ -44,8 +44,10 @@ function MainLayout() {
         aiStatus,
         audioStatus,
         publishAi,
+        publishAiConfig,
         publishAudio,
     } = useMqtt()
+
 
     const manageState = useCallback((updateType, newParam) => {
         setHexapod(prevHexapod => {
@@ -83,10 +85,11 @@ function MainLayout() {
         aiMessages,
         aiStatus,
         publishAi,
+        publishAiConfig,
         triggerAction,
     })
 
-    const onPageLoad = pageName => {
+    const onPageLoad = useCallback(pageName => {
         document.title = pageName + " - Hexapod Robot Simulator"
         if (pageName === SECTION_NAMES.landingPage) {
             setInHexapodPage(false)
@@ -94,7 +97,7 @@ function MainLayout() {
         }
         setInHexapodPage(true)
         manageState("pose", { pose: DEFAULT_POSE })
-    }
+    }, [manageState])
 
     const pageComponent = Component => (
         <Component

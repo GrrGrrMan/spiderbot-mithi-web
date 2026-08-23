@@ -18,7 +18,7 @@ export const AiActionGrid = ({ actions, activeExecutingAction, onExecuteAction, 
             <div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
                     <span style={{ fontSize: "0.7rem", fontWeight: "bold", color: "#94a3b8" }}>
-                        🚶 LOCOMOTION & GAITS (3D Animated)
+                        <span role="img" aria-label="walk">🚶</span> LOCOMOTION & GAITS (3D Animated)
                     </span>
                     {activeExecutingAction && (
                         <button
@@ -26,7 +26,7 @@ export const AiActionGrid = ({ actions, activeExecutingAction, onExecuteAction, 
                             onClick={onStopAll}
                             style={{ ...btnStyle, padding: "2px 8px", fontSize: "0.65rem", borderColor: "var(--c6-red)", color: "var(--c6-red)" }}
                         >
-                            ⏹ Emergency Stop
+                            <span role="img" aria-label="stop">⏹</span> Emergency Stop
                         </button>
                     )}
                 </div>
@@ -55,7 +55,7 @@ export const AiActionGrid = ({ actions, activeExecutingAction, onExecuteAction, 
             {/* Dynamic Gestures & Sequences */}
             <div>
                 <div style={{ fontSize: "0.7rem", fontWeight: "bold", color: "#94a3b8", marginBottom: "4px" }}>
-                    🎭 DYNAMIC GESTURE SEQUENCES (60FPS Interpolated)
+                    <span role="img" aria-label="mask">🎭</span> DYNAMIC GESTURE SEQUENCES (60FPS Interpolated)
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
                     {gestureActions.map(a => {
@@ -83,7 +83,7 @@ export const AiActionGrid = ({ actions, activeExecutingAction, onExecuteAction, 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                 <div>
                     <div style={{ fontSize: "0.7rem", fontWeight: "bold", color: "#94a3b8", marginBottom: "4px" }}>
-                        🔊 ACOUSTIC TONES
+                        <span role="img" aria-label="speaker">🔊</span> ACOUSTIC TONES
                     </div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
                         {audioActions.map(a => (
@@ -96,8 +96,9 @@ export const AiActionGrid = ({ actions, activeExecutingAction, onExecuteAction, 
 
                 <div>
                     <div style={{ fontSize: "0.7rem", fontWeight: "bold", color: "#94a3b8", marginBottom: "4px" }}>
-                        ⚡ SYSTEM POWER
+                        <span role="img" aria-label="power">⚡</span> SYSTEM POWER
                     </div>
+
                     <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
                         {systemActions.map(a => (
                             <button

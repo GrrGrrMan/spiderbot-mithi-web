@@ -24,7 +24,7 @@ export const SentinelStatusCard = ({
 
         {micError && (
             <div style={{ color: "var(--c6-red)", fontSize: "0.75rem", marginBottom: "8px" }}>
-                ⚠️ {micError}
+                <span role="img" aria-label="warning">⚠️</span> {micError}
             </div>
         )}
 

@@ -15,6 +15,9 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
     const activeReqIdRef = useRef(0)
     const motionTimerRef = useRef(null) // ◄ Must be inside the hook
 
+    const paramsRef = useRef(params)
+    paramsRef.current = params
+
     const stopLocomotionTimer = useCallback(() => {
         if (motionTimerRef.current) {
             clearTimeout(motionTimerRef.current)
@@ -54,8 +57,8 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
             const name = actionName || actionPayload.name || actionPayload.preset || "gesture"
             setActiveExecutingAction(name)
             const reqId = ++activeReqIdRef.current
-            const dims = params?.dimensions || DEFAULT_DIMENSIONS
-            const startPose = params?.pose || DEFAULT_POSE
+            const dims = paramsRef.current?.dimensions || DEFAULT_DIMENSIONS
+            const startPose = paramsRef.current?.pose || DEFAULT_POSE
 
             // 1. Transmit sequence command to physical ESP32-S3 node
             publishImmediate("hexapod/cmd", actionPayload)
@@ -75,7 +78,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
                 })
             }
         },
-        [params, stopStream, stopLocomotionTimer, publishImmediate]
+        [stopStream, stopLocomotionTimer, publishImmediate]
     )
 
     const playLocomotion = useCallback(
@@ -83,8 +86,8 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
             stopStream()
             setActiveExecutingAction(actionId)
             const reqId = ++activeReqIdRef.current
-            const dims = params?.dimensions || DEFAULT_DIMENSIONS
-            const startPose = params?.pose || DEFAULT_POSE
+            const dims = paramsRef.current?.dimensions || DEFAULT_DIMENSIONS
+            const startPose = paramsRef.current?.pose || DEFAULT_POSE
 
             generateLocomotionFrames(actionId, dims, durationMs, startPose).then(frames => {
                 if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
@@ -92,7 +95,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
                 }
             })
         },
-        [params, stopStream]
+        [stopStream]
     )
 
     const handleSingleJoint = useCallback(
@@ -103,7 +106,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
             const jointMap = { coxa: "alpha", coxia: "alpha", femur: "beta", tibia: "gamma" }
             const angleParam = jointMap[joint] || joint
 
-            const currentPose = params?.pose || DEFAULT_POSE
+            const currentPose = paramsRef.current?.pose || DEFAULT_POSE
             const currentAngle = currentPose[leg]?.[angleParam] || 0
             let targetAngle = mode === "relative" ? currentAngle + angle : angle
 
@@ -116,7 +119,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
             onUpdate("pose", { pose: newPose })
             publishImmediate("hexapod/cmd", buildServoBatchPayload(newPose))
         },
-        [params, onUpdate, publishImmediate, stopLocomotionTimer]
+        [onUpdate, publishImmediate, stopLocomotionTimer]
     )
 
     const triggerAction = useCallback(

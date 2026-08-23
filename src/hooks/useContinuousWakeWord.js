@@ -37,6 +37,8 @@ export const useContinuousWakeWord = ({
     publishAiRef.current = publishAi
     const aiOnlineRef = useRef(aiOnline)
     aiOnlineRef.current = aiOnline
+    const enabledRef = useRef(enabled)
+    enabledRef.current = enabled
 
     const clearPromptTimer = () => {
         if (promptTimerRef.current) {
@@ -144,7 +146,7 @@ export const useContinuousWakeWord = ({
 
                 myVadRef.current = myvad
 
-                if (enabled && isMountedRef.current) {
+                if (enabledRef.current && isMountedRef.current) {
                     myvad.start()
                     setIsListening(true)
                     setMicError(null)

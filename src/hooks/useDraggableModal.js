@@ -1,9 +1,9 @@
-// FILE: src/hooks/useDraggableModal.js
+// web-ui/src/hooks/useDraggableModal.js
 import { useState, useRef, useCallback, useEffect } from "react"
 
-const MIN_VISIBLE_X = 80
+const MIN_VISIBLE_X = 60 // Minimum pixels of panel kept visible on screen
 const HEADER_HEIGHT = 45
-const SNAP_EDGE_THRESHOLD = 16
+const SNAP_EDGE_THRESHOLD = 24
 const PADDING = 10
 
 export const useDraggableModal = (initialX = 20, initialY = 75) => {
@@ -15,60 +15,92 @@ export const useDraggableModal = (initialX = 20, initialY = 75) => {
     const [isMinimized, setIsMinimized] = useState(false)
     const isDownRef = useRef(false)
     const pointerIdRef = useRef(null)
-    const dragRef = useRef({ startX: 0, startY: 0, initialX, initialY })
     const cardRef = useRef(null)
-    const rafIdRef = useRef(null) // ◄ rAF Throttle
+    const currentCoordRef = useRef({ x: initialX, y: initialY })
 
-    const calculateSnapRecovery = useCallback((x, y) => {
-        const cardW = cardRef.current?.offsetWidth || 440
-        const winW = document.documentElement.clientWidth || window.innerWidth
-        const winH = document.documentElement.clientHeight || window.innerHeight
+    // Viewport & element bounds cached once per drag to prevent layout thrashing
+    const dragRef = useRef({
+        startX: 0,
+        startY: 0,
+        initialX,
+        initialY,
+        cardW: 440,
+        winW: 800,
+        winH: 600,
+    })
 
-        let snappedY = Math.max(PADDING, y)
-        snappedY = Math.min(snappedY, winH - HEADER_HEIGHT - PADDING)
+    const calculateMagneticSnap = useCallback((rawX, rawY, bounds = null) => {
+        const cardW = bounds ? bounds.cardW : (cardRef.current?.offsetWidth || 440)
+        const winW = bounds ? bounds.winW : (document.documentElement.clientWidth || window.innerWidth)
+        const winH = bounds ? bounds.winH : (document.documentElement.clientHeight || window.innerHeight)
 
-        let snappedX = Math.max(-cardW + MIN_VISIBLE_X, x)
-        snappedX = Math.min(snappedX, winW - MIN_VISIBLE_X)
+        let targetX = rawX
+        let targetY = rawY
 
-        if (Math.abs(snappedX - PADDING) < SNAP_EDGE_THRESHOLD) {
-            snappedX = PADDING
-        } else if (Math.abs(snappedX - (winW - cardW - PADDING)) < SNAP_EDGE_THRESHOLD) {
-            snappedX = winW - cardW - PADDING
+        // 1. Magnetic Edge Attraction (Snaps cleanly to padding if near an edge)
+        const rightSnapEdge = winW - cardW - PADDING
+        if (Math.abs(targetX - PADDING) < SNAP_EDGE_THRESHOLD) {
+            targetX = PADDING
+        } else if (Math.abs(targetX - rightSnapEdge) < SNAP_EDGE_THRESHOLD) {
+            targetX = rightSnapEdge
         }
 
-        if (Math.abs(snappedY - PADDING) < SNAP_EDGE_THRESHOLD) {
-            snappedY = PADDING
+        if (Math.abs(targetY - PADDING) < SNAP_EDGE_THRESHOLD) {
+            targetY = PADDING
         }
 
-        return { x: snappedX, y: snappedY }
+        // 2. Permissive Border Recovery (Guarantees panel is never lost outside screen)
+        const minX = -cardW + MIN_VISIBLE_X
+        const maxX = winW - MIN_VISIBLE_X
+        const minY = PADDING
+        const maxY = winH - HEADER_HEIGHT - PADDING
+
+        targetX = Math.max(minX, Math.min(targetX, maxX))
+        targetY = Math.max(minY, Math.min(targetY, maxY))
+
+        return { x: targetX, y: targetY }
     }, [])
 
+    // Viewport resize guardian
     useEffect(() => {
         const handleResize = () => {
-            setPosition(prev => calculateSnapRecovery(prev.x, prev.y))
+            const snapped = calculateMagneticSnap(posRef.current.x, posRef.current.y)
+            setPosition(snapped)
+            if (cardRef.current) {
+                cardRef.current.style.left = `${snapped.x}px`
+                cardRef.current.style.top = `${snapped.y}px`
+            }
         }
         window.addEventListener("resize", handleResize)
-        return () => {
-            window.removeEventListener("resize", handleResize)
-            if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current)
-        }
-    }, [calculateSnapRecovery])
+        return () => window.removeEventListener("resize", handleResize)
+    }, [calculateMagneticSnap])
 
     const handlePointerDown = useCallback(e => {
-        if (e.target.closest("button") || e.target.closest("input") || e.target.closest(".no-drag")) {
+        if (e.button !== 0 && e.pointerType === "mouse") return
+        if (e.target.closest("button") || e.target.closest("input") || e.target.closest("textarea") || e.target.closest(".no-drag")) {
             return
         }
 
         isDownRef.current = true
-        setIsDragging(true)
         pointerIdRef.current = e.pointerId
+
+        const card = cardRef.current
+        const cardW = card ? card.offsetWidth : 440
+        const winW = document.documentElement.clientWidth || window.innerWidth
+        const winH = document.documentElement.clientHeight || window.innerHeight
 
         dragRef.current = {
             startX: e.clientX,
             startY: e.clientY,
             initialX: posRef.current.x,
             initialY: posRef.current.y,
+            cardW,
+            winW,
+            winH,
         }
+        currentCoordRef.current = { x: posRef.current.x, y: posRef.current.y }
+
+        setIsDragging(true)
 
         try {
             e.currentTarget.setPointerCapture(e.pointerId)
@@ -78,18 +110,20 @@ export const useDraggableModal = (initialX = 20, initialY = 75) => {
     const handlePointerMove = useCallback(e => {
         if (!isDownRef.current) return
 
-        const dx = e.clientX - dragRef.current.startX
-        const dy = e.clientY - dragRef.current.startY
+        const { startX, startY, initialX, initialY } = dragRef.current
+        const dx = e.clientX - startX
+        const dy = e.clientY - startY
 
-        const nextX = dragRef.current.initialX + dx
-        const nextY = dragRef.current.initialY + dy
+        // ── Permissive Dragging: Full unhindered freedom beyond edges ──
+        const nextX = initialX + dx
+        const nextY = initialY + dy
 
-        // Batch coordinate updates to match the display refresh rate
-        if (!rafIdRef.current) {
-            rafIdRef.current = requestAnimationFrame(() => {
-                rafIdRef.current = null
-                setPosition({ x: nextX, y: nextY })
-            })
+        currentCoordRef.current = { x: nextX, y: nextY }
+
+        // Direct-DOM instant update (120 FPS / 0 React render thrashing)
+        if (cardRef.current) {
+            cardRef.current.style.left = `${nextX}px`
+            cardRef.current.style.top = `${nextY}px`
         }
     }, [])
 
@@ -97,11 +131,6 @@ export const useDraggableModal = (initialX = 20, initialY = 75) => {
         if (!isDownRef.current) return
         isDownRef.current = false
         setIsDragging(false)
-
-        if (rafIdRef.current) {
-            cancelAnimationFrame(rafIdRef.current)
-            rafIdRef.current = null
-        }
 
         if (pointerIdRef.current !== null) {
             try {
@@ -112,9 +141,22 @@ export const useDraggableModal = (initialX = 20, initialY = 75) => {
             pointerIdRef.current = null
         }
 
-        const recovered = calculateSnapRecovery(posRef.current.x, posRef.current.y)
-        setPosition(recovered)
-    }, [calculateSnapRecovery])
+        // ── Smooth Magnetic Recovery on Release ──
+        const raw = currentCoordRef.current
+        const bounds = {
+            cardW: dragRef.current.cardW,
+            winW: dragRef.current.winW,
+            winH: dragRef.current.winH,
+        }
+        const snapped = calculateMagneticSnap(raw.x, raw.y, bounds)
+
+        setPosition(snapped)
+
+        if (cardRef.current) {
+            cardRef.current.style.left = `${snapped.x}px`
+            cardRef.current.style.top = `${snapped.y}px`
+        }
+    }, [calculateMagneticSnap])
 
     const handlePointerCancel = useCallback(e => {
         if (isDownRef.current) {

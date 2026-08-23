@@ -8,6 +8,15 @@ export const AiChatTerminal = ({ messages = [] }) => {
         if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
     }, [messages])
 
+    // Safe string renderer — guarantees objects or tool calls never crash React
+    const renderContent = (content) => {
+        if (typeof content === "string") return content
+        if (typeof content === "object" && content !== null) {
+            return JSON.stringify(content, null, 2)
+        }
+        return String(content ?? "")
+    }
+
     return (
         <div
             ref={chatRef}
@@ -49,7 +58,7 @@ export const AiChatTerminal = ({ messages = [] }) => {
                                 textAlign: "left",
                             }}
                         >
-                            {m.content}
+                            {renderContent(m.content)}
                         </span>
                     </div>
                 )

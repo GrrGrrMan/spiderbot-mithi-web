@@ -391,9 +391,10 @@ export async function generateDynamicSequenceFramesAsync(keyframes, dimensions, 
                 tx: (kf.tx || 0) / 100.0,
                 ty: (kf.ty || 0) / 100.0,
                 tz: (kf.tz || 0) / 132.0,
-                rx: kf.rx || 0,
-                ry: kf.ry || 0,
-                rz: kf.rz || 0,
+                // INVERT ROTATIONS to perfectly match ESP32-S3 Firmware (SequencePoser.cpp)
+                rx: -(kf.rx || 0),
+                ry: -(kf.ry || 0),
+                rz: -(kf.rz || 0),
                 hipStance: 20,
                 legStance: 0,
             })
@@ -401,6 +402,10 @@ export async function generateDynamicSequenceFramesAsync(keyframes, dimensions, 
 
         // B. Joint Overrides (e.g. waving front leg)
         if (kf.joints && typeof kf.joints === "object") {
+            // Carry over previous frame's pose so untouched legs don't instantly snap to 0
+            const lastPose = convertedPoses[convertedPoses.length - 1] || DEFAULT_POSE
+            framePose = JSON.parse(JSON.stringify(lastPose))
+            
             Object.entries(kf.joints).forEach(([shortKey, angles]) => {
                 const fullLegName = LEG_KEYS[shortKey] || shortKey
                 if (framePose[fullLegName]) {

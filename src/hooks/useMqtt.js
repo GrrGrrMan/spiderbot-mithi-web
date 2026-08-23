@@ -35,6 +35,10 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
     const pendingPublishRef = useRef(null)
     const trailingTimerRef = useRef(null)
 
+    // Guards to prevent synchronous React render thrashing
+    const lastTelemetryUpdateRef = useRef(0)
+    const lastCamTelemetryUpdateRef = useRef(0)
+
     const clearLogs = useCallback(() => setLogs([]), [])
     const clearAiMessages = useCallback(() => setAiMessages([]), [])
 
@@ -61,7 +65,6 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
                 client.subscribe(`hexapod/${camDeviceId}/telemetry`)
                 client.subscribe(`hexapod/${camDeviceId}/config`)
             }
-            console.log(`[MQTT WebUI] Subscribed to [${deviceId}] & [${camDeviceId}]`)
         })
 
         client.on("close", () => setIsConnected(false))
@@ -74,16 +77,31 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
             if (topic.endsWith("/telemetry")) {
                 try {
                     const parsed = JSON.parse(payload)
+                    const now = Date.now()
+                    
                     if (isCamTopic) {
-                        setCamTelemetry(parsed)
-                    } else {
-                        setTelemetry(parsed)
-                        if (parsed.audio) {
-                            setAudioStatus(prev => ({
-                                state: parsed.audio,
-                                action: prev?.action || "tts"
-                            }))
+                        if (now - lastCamTelemetryUpdateRef.current > 500) {
+                            setCamTelemetry(parsed)
+                            lastCamTelemetryUpdateRef.current = now
                         }
+                    } else {
+                        // Throttle React state updates to 2Hz to prevent massive tree-render lag
+                        if (now - lastTelemetryUpdateRef.current > 500) {
+                            setTelemetry(parsed)
+                            lastTelemetryUpdateRef.current = now
+                        }
+                        
+                        if (parsed.audio) {
+                            setAudioStatus(prev => {
+                                if (prev?.state === parsed.audio) return prev;
+                                return {
+                                    state: parsed.audio,
+                                    action: prev?.action || "tts"
+                                }
+                            })
+                        }
+                        
+                        // Non-state-based Plotly traces are still dispatched at full telemetry frequency
                         if (parsed.pose && typeof window !== "undefined") {
                             window.dispatchEvent(
                                 new CustomEvent("hexapod-telemetry-frame", { detail: parsed.pose })
@@ -98,30 +116,19 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
                     const parsed = JSON.parse(payload)
                     if (isCamTopic) setCamConfig(parsed)
                     else setConfig(parsed)
-                } catch (e) {
-                    console.error("[MQTT WebUI] Config JSON parse error:", e)
-                }
+                } catch (e) {}
             } else if (topic.endsWith("/logs") && !isCamTopic) {
                 setLogs(prev => [...prev.slice(-99), payload])
             } else if (topic.endsWith("/ai") && !isCamTopic) {
                 try {
                     const msg = JSON.parse(payload)
-                    setAiMessages(prev => [...prev.slice(-199), msg])
-                } catch (e) {
-                    console.error("[MQTT WebUI] AI JSON parse error:", e)
-                }
+                    if (msg.type === "audio" || msg.action === "tts") return
+                    setAiMessages(prev => [...prev.slice(-49), msg])
+                } catch (e) {}
             } else if (topic.endsWith("/ai/status") && !isCamTopic) {
-                try {
-                    setAiStatus(JSON.parse(payload))
-                } catch (e) {
-                    console.error("[MQTT WebUI] AI status JSON parse error:", e)
-                }
+                try { setAiStatus(JSON.parse(payload)) } catch (e) {}
             } else if (topic.endsWith("/audio/status") && !isCamTopic) {
-                try {
-                    setAudioStatus(JSON.parse(payload))
-                } catch (e) {
-                    console.error("[MQTT WebUI] Audio status JSON parse error:", e)
-                }
+                try { setAudioStatus(JSON.parse(payload)) } catch (e) {}
             }
         })
 
@@ -132,16 +139,13 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         }
     }, [brokerUrlOverride, deviceId, camDeviceId])
 
-    // Heartbeat Publisher to S3 Command Queue
     useEffect(() => {
         if (!isConnected || !clientRef.current) return
         const heartbeatInterval = setInterval(() => {
             const targetTopic = `hexapod/${deviceId}/cmd`
             try {
                 clientRef.current.publish(targetTopic, JSON.stringify({ type: "heartbeat" }))
-            } catch (err) {
-                console.error("[MQTT WebUI] Heartbeat error:", err)
-            }
+            } catch (err) {}
         }, 500)
         return () => clearInterval(heartbeatInterval)
     }, [isConnected, deviceId])
@@ -187,6 +191,11 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         clientRef.current.publish(`hexapod/${deviceId}/ai`, JSON.stringify(payload))
     }, [isConnected, deviceId])
 
+    const publishAiConfig = useCallback((payload) => {
+        if (!clientRef.current || !isConnected) return
+        clientRef.current.publish(`hexapod/${deviceId}/ai/config`, JSON.stringify(payload))
+    }, [isConnected, deviceId])
+
     const publishAudio = useCallback((payload) => {
         if (!clientRef.current || !isConnected) return
         clientRef.current.publish(`hexapod/${deviceId}/audio`, JSON.stringify(payload))
@@ -207,6 +216,7 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         publishThrottled,
         publishImmediate,
         publishAi,
+        publishAiConfig,
         publishAudio,
         clearLogs,
         clearAiMessages,
