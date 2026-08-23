@@ -172,13 +172,13 @@ const PATHS = {
         path: PATH_NAMES.ai,
         description: SECTION_NAMES.ai,
         icon: ICON_COMPONENTS.robot,
-        hidden: false,
+        hidden: true,
     },
     presets: {
         path: PATH_NAMES.presets,
         description: SECTION_NAMES.presets,
         icon: ICON_COMPONENTS.circle,
-        hidden: false,
+        hidden: true,
     },
     judgement: {
         path: PATH_NAMES.judgement,

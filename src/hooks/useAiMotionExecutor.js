@@ -1,5 +1,5 @@
 // web-ui/src/hooks/useAiMotionExecutor.js
-import { useState, useRef, useCallback } from "react"
+import { useState, useRef, useCallback, useEffect } from "react"
 import { DEFAULT_POSE, DEFAULT_DIMENSIONS } from "../templates"
 import { buildServoBatchPayload } from "../utils/servoMapper"
 import { 
@@ -13,6 +13,24 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
     const [activeFrames, setActiveFrames] = useState([])
     const [activeExecutingAction, setActiveExecutingAction] = useState(null)
     const activeReqIdRef = useRef(0)
+    const motionTimerRef = useRef(null) // ◄ Must be inside the hook
+
+    const stopLocomotionTimer = useCallback(() => {
+        if (motionTimerRef.current) {
+            clearTimeout(motionTimerRef.current)
+            motionTimerRef.current = null
+        }
+    }, [])
+
+    // Cleanup pending timer when component unmounts
+    useEffect(() => {
+        return () => {
+            if (motionTimerRef.current) {
+                clearTimeout(motionTimerRef.current)
+                motionTimerRef.current = null
+            }
+        }
+    }, [])
 
     // Local 60 FPS Visualizer (Zero MQTT Pose Spamming)
     const { stop: stopStream } = usePoseFrameStream(
@@ -32,6 +50,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
         (actionPayload, actionName) => {
             if (!actionPayload) return
             stopStream()
+            stopLocomotionTimer()
             const name = actionName || actionPayload.name || actionPayload.preset || "gesture"
             setActiveExecutingAction(name)
             const reqId = ++activeReqIdRef.current
@@ -56,7 +75,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
                 })
             }
         },
-        [params, stopStream, publishImmediate]
+        [params, stopStream, stopLocomotionTimer, publishImmediate]
     )
 
     const playLocomotion = useCallback(
@@ -79,6 +98,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
     const handleSingleJoint = useCallback(
         jointParams => {
             if (!jointParams?.leg) return
+            stopLocomotionTimer()
             const { leg, joint, angle = 0, mode = "relative" } = jointParams
             const jointMap = { coxa: "alpha", coxia: "alpha", femur: "beta", tibia: "gamma" }
             const angleParam = jointMap[joint] || joint
@@ -96,7 +116,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
             onUpdate("pose", { pose: newPose })
             publishImmediate("hexapod/cmd", buildServoBatchPayload(newPose))
         },
-        [params, onUpdate, publishImmediate]
+        [params, onUpdate, publishImmediate, stopLocomotionTimer]
     )
 
     const triggerAction = useCallback(
@@ -115,6 +135,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
             } else if (payload?.type === "sequence" || payload?.type === "preset" || id?.startsWith("preset_")) {
                 playSequence(payload, name)
             } else if (payload?.type === "motion") {
+                stopLocomotionTimer()
                 setActiveExecutingAction(name)
                 publishImmediate("hexapod/cmd", payload)
                 if (id === "stop") {
@@ -124,27 +145,30 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
                 } else {
                     playLocomotion(id, duration_ms || 3000)
                     if (duration_ms > 0) {
-                        setTimeout(() => {
+                        motionTimerRef.current = setTimeout(() => {
                             publishImmediate("hexapod/cmd", { ...payload, vx: 0, vy: 0, omega: 0 })
+                            motionTimerRef.current = null
                         }, duration_ms)
                     }
                 }
             } else {
+                stopLocomotionTimer()
                 setActiveExecutingAction(name)
                 publishImmediate("hexapod/cmd", payload)
             }
         },
-        [publishAudio, publishImmediate, playSequence, playLocomotion, stopStream, onUpdate, handleSingleJoint]
+        [publishAudio, publishImmediate, playSequence, playLocomotion, stopStream, onUpdate, handleSingleJoint, stopLocomotionTimer]
     )
 
     const stopAll = useCallback(() => {
+        stopLocomotionTimer()
         stopStream()
         activeReqIdRef.current++
         setActiveExecutingAction(null)
         setActiveFrames([])
         publishImmediate("hexapod/cmd", { type: "motion", vx: 0, vy: 0, omega: 0 })
         onUpdate("pose", { pose: DEFAULT_POSE })
-    }, [stopStream, publishImmediate, onUpdate])
+    }, [stopStream, publishImmediate, onUpdate, stopLocomotionTimer])
 
     return { activeExecutingAction, triggerAction, stopAll }
 }

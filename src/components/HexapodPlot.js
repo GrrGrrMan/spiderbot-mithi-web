@@ -1,3 +1,4 @@
+// FILE: src/components/HexapodPlot.js
 import React from "react"
 import createPlotlyComponent from "react-plotly.js/factory"
 import * as defaults from "../templates"
@@ -11,7 +12,9 @@ class HexapodPlot extends React.Component {
     Plot = null
     Plotly = null
     graphDiv = null
+    containerRef = null
     latestGhostPose = null
+    isPlotDragging = false
 
     shouldComponentUpdate(nextProps, nextState) {
         return (
@@ -34,11 +37,57 @@ class HexapodPlot extends React.Component {
         
         window.addEventListener("hexapod-anim-frame", this.handleAnimFrame)
         window.addEventListener("hexapod-telemetry-frame", this.handleTelemetryFrame)
+
+        // ── Seamless Camera Orbit & Boundary Guard ──
+        window.addEventListener("pointerdown", this.handleGlobalPointerDown, true)
+        window.addEventListener("pointerup", this.handleGlobalPointerUp, true)
+        window.addEventListener("pointercancel", this.handleGlobalPointerUp, true)
     }
 
     componentWillUnmount() {
         window.removeEventListener("hexapod-anim-frame", this.handleAnimFrame)
         window.removeEventListener("hexapod-telemetry-frame", this.handleTelemetryFrame)
+
+        window.removeEventListener("pointerdown", this.handleGlobalPointerDown, true)
+        window.removeEventListener("pointerup", this.handleGlobalPointerUp, true)
+        window.removeEventListener("pointercancel", this.handleGlobalPointerUp, true)
+    }
+
+    handleGlobalPointerDown = (e) => {
+        const container = this.containerRef || this.graphDiv
+        if (!container) return
+
+        const isInside = container.contains(e.target)
+
+        if (isInside) {
+            // 1. Started INSIDE: Capture pointer so camera continues orbiting even if mouse exits borders
+            this.isPlotDragging = true
+            container.style.pointerEvents = "auto"
+            try {
+                const canvas = container.querySelector("canvas") || container
+                if (e.pointerId !== undefined && canvas.setPointerCapture) {
+                    canvas.setPointerCapture(e.pointerId)
+                }
+            } catch (_) {}
+        } else {
+            // 2. Started OUTSIDE: Mute plot pointer events so sweeping into the plot doesn't trigger camera
+            this.isPlotDragging = false
+            container.style.pointerEvents = "none"
+        }
+    }
+
+    handleGlobalPointerUp = (e) => {
+        const container = this.containerRef || this.graphDiv
+        this.isPlotDragging = false
+        if (container) {
+            container.style.pointerEvents = "auto"
+            try {
+                const canvas = container.querySelector("canvas") || container
+                if (e && e.pointerId !== undefined && canvas.hasPointerCapture && canvas.hasPointerCapture(e.pointerId)) {
+                    canvas.releasePointerCapture(e.pointerId)
+                }
+            } catch (_) {}
+        }
     }
 
     handleAnimFrame = (e) => {
@@ -118,7 +167,14 @@ class HexapodPlot extends React.Component {
         }
 
         const Plot = this.Plot
-        return <Plot {...props} />
+        return (
+            <div 
+                ref={el => { this.containerRef = el }}
+                style={{ width: "100%", height: "100%", position: "relative", touchAction: "none" }}
+            >
+                <Plot {...props} />
+            </div>
+        )
     }
 }
 

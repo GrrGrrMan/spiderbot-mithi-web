@@ -10,15 +10,18 @@ const getBrokerUrl = () => {
     const wsScheme = isHttps ? "wss" : "ws"
     const wsPort = isHttps ? "9443" : "9001"
 
+    // 1. Explicit query override: ?broker=192.168.1.50
     if (queryBroker) {
         return `${wsScheme}://${queryBroker}:${wsPort}`
     }
 
+    // 2. Local dev server on PC pointing to Pi on mDNS/hotspot
     const hostname = window.location.hostname
     if (hostname === "localhost" || hostname === "127.0.0.1") {
-        return "ws://broker.emqx.io:8083/mqtt"
+        return "ws://spider-w.local:9001" // or "ws://192.168.4.1:9001"
     }
 
+    // 3. Production build served from Pi Nginx (auto-resolves current Pi IP)
     return `${wsScheme}://${hostname}:${wsPort}`
 }
 

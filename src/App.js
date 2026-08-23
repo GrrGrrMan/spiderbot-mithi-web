@@ -3,17 +3,13 @@ import React, { useState, useEffect } from "react"
 import { BrowserRouter as Router, useLocation } from "react-router-dom"
 import { DEFAULT_POSE } from "./templates"
 import { SECTION_NAMES } from "./components/vars"
-import { Nav, NavDetailed, DimensionsWidget, ConsoleDrawer } from "./components"
+import { Nav, NavDetailed, DimensionsWidget } from "./components"
 import { updateHexapod, Page } from "./AppHelpers"
 import HexapodPlot from "./components/HexapodPlot"
 import { useMqtt } from "./hooks/useMqtt"
 import ViewportToggle from "./components/viewport/ViewportToggle"
 import CameraView from "./components/camera/CameraView"
-
-window.dataLayer = window.dataLayer || []
-function gtag() {
-    window.dataLayer.push(arguments)
-}
+import AiChatOverlay from "./components/ai/AiChatOverlay"
 
 function MainLayout() {
     const location = useLocation()
@@ -22,22 +18,13 @@ function MainLayout() {
     const [inHexapodPage, setInHexapodPage] = useState(false)
     const [hexapod, setHexapod] = useState(() => updateHexapod("default"))
     const [revision, setRevision] = useState(0)
+    const [isAiOverlayOpen, setIsAiOverlayOpen] = useState(false) // ◄ Overlay toggle
 
     const [activeView, setActiveView] = useState(() => {
         if (typeof window === "undefined") return "sim"
         const params = new URLSearchParams(window.location.search)
         return params.get("view") === "camera" ? "cam" : "sim"
     })
-
-    useEffect(() => {
-        if (activeView === "sim") {
-            const id = requestAnimationFrame(() => {
-                window.dispatchEvent(new Event("resize"))
-            })
-            return () => cancelAnimationFrame(id)
-        }
-        return undefined
-    }, [activeView])
 
     const {
         isConnected,
@@ -58,11 +45,10 @@ function MainLayout() {
         publishAudio,
     } = useMqtt()
 
+    // Dimensions auto-sync from hardware config
     useEffect(() => {
         if (!config || !config.dimensions) return
-
         const { coxia, femur, tibia, body_length, body_width_center, body_width_corner } = config.dimensions
-
         const translatedDimensions = {
             front: Math.round(body_width_corner / 2.0),
             side: parseFloat((body_length / 2.0).toFixed(1)),
@@ -71,29 +57,15 @@ function MainLayout() {
             femur: Math.round(femur),
             tibia: Math.round(tibia),
         }
-
-        const curDims = hexapod.dimensions
-        const hasChanged = Object.keys(translatedDimensions).some(
-            key => translatedDimensions[key] !== curDims[key]
-        )
-
-        if (hasChanged) {
-            manageState("dimensions", { dimensions: translatedDimensions })
-            console.log("[MQTT WebUI] Auto-scaled 3D model from device config:", translatedDimensions)
-        }
-    }, [config, hexapod.dimensions])
+        manageState("dimensions", { dimensions: translatedDimensions })
+    }, [config])
 
     const onPageLoad = pageName => {
-        document.title = pageName + " - Mithi's Bare Minimum Hexapod Robot Simulator"
-        gtag("config", "UA-170794768-1", {
-            page_path: window.location.pathname + window.location.search,
-        })
-
+        document.title = pageName + " - Hexapod Robot Simulator"
         if (pageName === SECTION_NAMES.landingPage) {
             setInHexapodPage(false)
             return
         }
-
         setInHexapodPage(true)
         manageState("pose", { pose: DEFAULT_POSE })
     }
@@ -133,20 +105,45 @@ function MainLayout() {
 
     return (
         <>
-            <Nav isConnected={isConnected} />
+            <Nav isConnected={isConnected} onToggleAi={() => setIsAiOverlayOpen(prev => !prev)} />
+
             <div id="main" style={isJudgementView ? { display: "block" } : undefined}>
-                <div id="sidebar" style={isJudgementView ? { width: "100%", maxWidth: "100%", margin: 0 } : undefined}>
-                    {/* Live connection & telemetry widget */}
+                {/* ── Left Sidebar (relative positioning enables docked overlay) ── */}
+                <div 
+                    id="sidebar" 
+                    style={{ 
+                        position: "relative", 
+                        ...(isJudgementView ? { width: "100%", maxWidth: "100%", margin: 0 } : {}) 
+                    }}
+                >
+                    {/* Floating / Docked AI Overlay */}
+                    <AiChatOverlay
+                        isOpen={isAiOverlayOpen}
+                        onToggle={() => setIsAiOverlayOpen(prev => !prev)}
+                        publishImmediate={publishImmediate}
+                        publishAi={publishAi}
+                        publishAudio={publishAudio}
+                        aiMessages={aiMessages}
+                        clearAiMessages={clearAiMessages}
+                        aiStatus={aiStatus}
+                        audioStatus={audioStatus}
+                        isConnected={isConnected}
+                        aiDeviceId={deviceId}
+                        logs={logs}                 
+                        clearLogs={clearLogs}         
+                        telemetry={telemetry}        
+                        params={{
+                            dimensions: hexapod.dimensions,
+                            pose: hexapod.pose,
+                        }}
+                        onUpdate={manageState}
+                    />
+
+                    {/* Robot Status Box */}
                     <div className="border" style={{ marginBottom: "15px", padding: "10px" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <span style={{ fontSize: "0.75rem", fontWeight: "bold" }}>ROBOT STATUS:</span>
-                            <span
-                                style={{
-                                    fontSize: "0.75rem",
-                                    color: isConnected ? "var(--c1-green)" : "var(--c6-red)",
-                                    fontWeight: "bolder",
-                                }}
-                            >
+                            <span style={{ fontSize: "0.75rem", color: isConnected ? "var(--c1-green)" : "var(--c6-red)", fontWeight: "bolder" }}>
                                 {isConnected ? "CONNECTED" : "DISCONNECTED"}
                             </span>
                         </div>
@@ -171,36 +168,27 @@ function MainLayout() {
                     {!inHexapodPage ? <NavDetailed /> : null}
                 </div>
 
-                {/* Hide default right plot container when on the Judgement page (as it renders its own split viewport) */}
-                <div id="plot" className="border" hidden={!inHexapodPage || isJudgementView}>
-                    {inHexapodPage && !isJudgementView && (
-                        <ViewportToggle
-                            activeView={activeView}
-                            onChange={setActiveView}
-                        />
+                {/* ── Right Stage (3D Kinematics Simulator / Camera) ── */}
+                <div 
+                    id="plot" 
+                    className="border" 
+                    style={{
+                        position: "relative",
+                        overflow: "hidden",
+                        backgroundColor: "#0a0f1d",
+                    }}
+                    hidden={(!inHexapodPage && activeView !== "cam") || isJudgementView}
+                >
+                    {(!isJudgementView) && (
+                        <ViewportToggle activeView={activeView} onChange={setActiveView} />
                     )}
                     {activeView === "cam" ? (
-                        <CameraView
-                            config={camConfig}
-                            telemetry={camTelemetry}
-                            isConnected={isConnected}
-                        />
+                        <CameraView config={camConfig} telemetry={camTelemetry} isConnected={isConnected} />
                     ) : (
-                        <HexapodPlot
-                            revision={revision}
-                            hexapod={hexapod}
-                        />
+                        <HexapodPlot revision={revision} hexapod={hexapod} />
                     )}
                 </div>
             </div>
-
-            <ConsoleDrawer
-                telemetry={telemetry}
-                isConnected={isConnected}
-                logs={logs}
-                publishImmediate={publishImmediate}
-                clearLogs={clearLogs}
-            />
 
             {inHexapodPage ? <NavDetailed /> : null}
         </>
