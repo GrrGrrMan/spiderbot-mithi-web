@@ -56,7 +56,7 @@ export const usePoseFrameStream = (
                         const finalPose = finalFrame.pose || finalFrame
                         window.dispatchEvent(new CustomEvent('hexapod-anim-frame', { detail: finalFrame }))
                         if (onPublishRef.current) onPublishRef.current(finalPose)
-                        if (onCompleteRef.current) onCompleteRef.current(finalPose)
+                        if (onCompleteRef.current) onCompleteRef.current(finalFrame)
                     }
                 }
                 stop()

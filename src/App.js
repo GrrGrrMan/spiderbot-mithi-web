@@ -16,6 +16,8 @@ import AiChatOverlay from "./components/ai/AiChatOverlay"
 import { useContinuousWakeWord } from "./hooks/useContinuousWakeWord"
 import { matchAction } from "./utils/aiActionMatcher"
 import { resolveAction } from "./utils/aiActionResolver"
+import { RobotProvider } from "./context/RobotContext"
+
 
 function MainLayout() {
     const location = useLocation()
@@ -193,45 +195,47 @@ function MainLayout() {
         manageState("pose", { pose: DEFAULT_POSE })
     }, [manageState])
 
-    const pageComponent = Component => (
-        <Component
-            onMount={onPageLoad}
-            onUpdate={manageState}
-            publishThrottled={publishThrottled}
-            publishImmediate={publishImmediate}
-            publishAi={publishAi}
-            publishAiConfig={publishAiConfig}
-            publishAiMemory={publishAiMemory}
-            publishAudio={publishAudio}
-            aiMessages={aiMessages}
-            clearAiMessages={clearAiMessages}
-            aiStatus={aiStatus}
-            audioStatus={audioStatus}
-            memoryState={memoryState}
-            isConnected={isConnected}
-            aiDeviceId={deviceId}
-            camConfig={camConfig}
-            camTelemetry={camTelemetry}
-            hexapod={hexapod}
-            revision={revision}
-            params={{
-                dimensions: hexapod.dimensions,
-                pose: hexapod.pose,
-            }}
-            // Shared singleton instances passed to pages
-            activeExecutingAction={activeExecutingAction}
-            triggerAction={triggerAction}
-            stopAll={stopAll}
-            aiChat={aiChat}
-            smartSpeaker={smartSpeaker}
-            setSmartSpeaker={setSmartSpeaker}
-            sentinel={sentinel}
-            sentinelLog={sentinelLog}
-        />
-    )
+    const robotContextValue = {
+        onMount: onPageLoad,
+        onUpdate: manageState,
+        publishThrottled,
+        publishImmediate,
+        publishAi,
+        publishAiConfig,
+        publishAiMemory,
+        publishAudio,
+        aiMessages,
+        clearAiMessages,
+        aiStatus,
+        audioStatus,
+        memoryState,
+        isConnected,
+        aiDeviceId: deviceId,
+        camConfig,
+        camTelemetry,
+        hexapod,
+        revision,
+        params: {
+            dimensions: hexapod.dimensions,
+            pose: hexapod.pose,
+        },
+        activeExecutingAction,
+        triggerAction,
+        stopAll,
+        aiChat,
+        smartSpeaker,
+        setSmartSpeaker,
+        sentinel,
+        sentinelLog,
+        logs,
+        clearLogs,
+        telemetry,
+    }
+
+    const pageComponent = Component => <Component {...robotContextValue} />
 
     return (
-        <>
+        <RobotProvider value={robotContextValue}>
             <Nav isConnected={isConnected} onToggleAi={() => setIsAiOverlayOpen(prev => !prev)} />
 
             <div id="main">
@@ -320,7 +324,7 @@ function MainLayout() {
             </div>
 
             {inHexapodPage ? <NavDetailed /> : null}
-        </>
+        </RobotProvider>
     )
 }
 
