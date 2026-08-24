@@ -1,13 +1,21 @@
 // web-ui/src/components/ai/AiInputControls.js
 import React from "react"
 
-export const AiInputControls = ({ input, setInput, onSend, recording, onToggleMic, micBlocked, aiOnline }) => (
+export const AiInputControls = ({
+    input = "",
+    setInput = () => {},
+    onSend = () => {},
+    recording = false,
+    onToggleMic = () => {},
+    micBlocked = false,
+    aiOnline = false,
+}) => (
     <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
         <input
             type="text"
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && onSend()}
+            value={input || ""}
+            onChange={e => (typeof setInput === "function" ? setInput(e.target.value) : undefined)}
+            onKeyDown={e => e.key === "Enter" && typeof onSend === "function" && onSend()}
             placeholder={aiOnline ? "Ask AI assistant anything…" : "Type a direct command (e.g., 'walk forward')…"}
             style={{
                 flex: 1,
@@ -24,7 +32,7 @@ export const AiInputControls = ({ input, setInput, onSend, recording, onToggleMi
             type="button"
             onClick={onSend}
             style={{ ...btnStyle, background: "var(--c4-blue)", color: "#fff", height: "2.2rem" }}
-            disabled={!input.trim()}
+            disabled={!input || !input.trim()}
         >
             Send
         </button>

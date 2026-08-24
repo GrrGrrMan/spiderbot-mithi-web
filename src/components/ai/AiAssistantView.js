@@ -1,5 +1,5 @@
 // web-ui/src/components/ai/AiAssistantView.js
-import React from "react"
+import React, { useState } from "react"
 import { AiStatusBar } from "./AiStatusBar"
 import { AiConfigDrawer } from "./AiConfigDrawer"
 import { AiTaskStepper } from "./AiTaskStepper"
@@ -8,25 +8,38 @@ import { AiInputControls } from "./AiInputControls"
 import { AiActionGrid } from "./AiActionGrid"
 import { SentinelStatusCard } from "./SentinelStatusCard"
 
-export const AiAssistantView = ({
-    aiChat,
-    aiStatus,
-    audioStatus,
-    isConnected,
-    memoryState,
-    publishAiMemory,
-    activeExecutingAction,
-    stopAll,
-    smartSpeaker,
-    setSmartSpeaker,
-    sentinel,
-    sentinelLog,
-    isConfigOpen,
-    onToggleConfig,
-    variant = "hub", // "hub" | "page"
-}) => {
-    const aiOnline = aiChat?.aiOnline ?? Boolean(aiStatus && aiStatus.state !== "offline")
-    const messages = aiChat?.messages || []
+export const AiAssistantView = (props) => {
+    const {
+        aiChat,
+        aiStatus,
+        audioStatus,
+        isConnected,
+        memoryState,
+        publishAiMemory,
+        activeExecutingAction,
+        stopAll,
+        smartSpeaker,
+        setSmartSpeaker,
+        sentinel,
+        sentinelLog,
+        isConfigOpen,
+        onToggleConfig,
+    } = props
+
+    // Internal fallback in case setInput/input were not passed down
+    const [fallbackInput, setFallbackInput] = useState("")
+
+    // Resolve props whether passed flattened or inside aiChat
+    const effectiveInput = props.input !== undefined ? props.input : (aiChat?.input !== undefined ? aiChat.input : fallbackInput)
+    const effectiveSetInput = props.setInput || aiChat?.setInput || setFallbackInput
+    const effectiveOnSend = props.onSend || aiChat?.handleSend || (() => {})
+    const effectiveRecording = props.recording !== undefined ? props.recording : (aiChat?.recording || false)
+    const effectiveToggleMic = props.onToggleMic || (aiChat?.recording ? aiChat?.stopMic : aiChat?.startMic) || (() => {})
+    const effectiveMicBlocked = props.micBlocked !== undefined ? props.micBlocked : (aiChat?.micBlocked || false)
+    const effectiveAiOnline = props.aiOnline !== undefined ? props.aiOnline : (aiChat?.aiOnline ?? Boolean(aiStatus && aiStatus.state !== "offline"))
+    const effectiveMessages = props.messages || aiChat?.messages || []
+    const effectiveActions = props.actions || aiChat?.ACTIONS || []
+    const effectiveOnExecuteAction = props.onExecuteAction || aiChat?.handleExecuteAction || (() => {})
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -48,7 +61,7 @@ export const AiAssistantView = ({
                 </span>
                 <button
                     type="button"
-                    onClick={() => setSmartSpeaker(!smartSpeaker)}
+                    onClick={() => setSmartSpeaker && setSmartSpeaker(!smartSpeaker)}
                     style={{
                         padding: "3px 10px",
                         borderRadius: "12px",
@@ -76,7 +89,7 @@ export const AiAssistantView = ({
             )}
 
             <AiStatusBar
-                aiOnline={aiOnline}
+                aiOnline={effectiveAiOnline}
                 aiStatus={aiStatus}
                 audioStatus={audioStatus}
                 isConnected={isConnected}
@@ -87,37 +100,37 @@ export const AiAssistantView = ({
             <AiConfigDrawer
                 isOpen={isConfigOpen}
                 aiStatus={aiStatus}
-                onUpdateConfig={aiChat?.handleUpdateConfig || (() => {})}
+                onUpdateConfig={aiChat?.handleUpdateConfig || props.onUpdateConfig || (() => {})}
                 memoryState={memoryState || aiChat?.memoryState}
-                publishAiMemory={publishAiMemory || aiChat?.publishAiMemory}
+                publishAiMemory={publishAiMemory || aiChat?.publishAiMemory || (() => {})}
             />
 
             <AiTaskStepper
-                isThinking={aiChat?.isThinking}
-                thoughtText={aiChat?.thoughtText}
-                thoughtTps={aiChat?.thoughtTps}
-                thoughtElapsed={aiChat?.thoughtElapsed}
-                currentPlan={aiChat?.currentPlan}
-                activeStepIndex={aiChat?.activeStepIndex}
+                isThinking={props.isThinking !== undefined ? props.isThinking : aiChat?.isThinking}
+                thoughtText={props.thoughtText !== undefined ? props.thoughtText : aiChat?.thoughtText}
+                thoughtTps={props.thoughtTps !== undefined ? props.thoughtTps : aiChat?.thoughtTps}
+                thoughtElapsed={props.thoughtElapsed !== undefined ? props.thoughtElapsed : aiChat?.thoughtElapsed}
+                currentPlan={props.currentPlan !== undefined ? props.currentPlan : aiChat?.currentPlan}
+                activeStepIndex={props.activeStepIndex !== undefined ? props.activeStepIndex : aiChat?.activeStepIndex}
                 onAbort={stopAll}
             />
 
-            <AiChatTerminal messages={messages} />
+            <AiChatTerminal messages={effectiveMessages} />
 
             <AiInputControls
-                input={aiChat?.input || ""}
-                setInput={aiChat?.setInput}
-                onSend={aiChat?.handleSend}
-                recording={aiChat?.recording}
-                onToggleMic={aiChat?.recording ? aiChat?.stopMic : aiChat?.startMic}
-                micBlocked={aiChat?.micBlocked}
-                aiOnline={aiOnline}
+                input={effectiveInput}
+                setInput={effectiveSetInput}
+                onSend={effectiveOnSend}
+                recording={effectiveRecording}
+                onToggleMic={effectiveToggleMic}
+                micBlocked={effectiveMicBlocked}
+                aiOnline={effectiveAiOnline}
             />
 
             <AiActionGrid
-                actions={aiChat?.ACTIONS || []}
+                actions={effectiveActions}
                 activeExecutingAction={activeExecutingAction}
-                onExecuteAction={aiChat?.handleExecuteAction}
+                onExecuteAction={effectiveOnExecuteAction}
                 onStopAll={stopAll}
             />
         </div>
