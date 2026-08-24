@@ -29,6 +29,7 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
     const [aiMessages, setAiMessages] = useState([])
     const [aiStatus, setAiStatus] = useState(null)
     const [audioStatus, setAudioStatus] = useState(null)
+    const [memoryState, setMemoryState] = useState(null)
 
     const clientRef = useRef(null)
     const lastPublishRef = useRef(0)
@@ -60,6 +61,7 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
             client.subscribe(`hexapod/${deviceId}/ai`)
             client.subscribe(`hexapod/${deviceId}/ai/status`)
             client.subscribe(`hexapod/${deviceId}/audio/status`)
+            client.subscribe(`hexapod/${deviceId}/ai/memory/state`)
 
             if (camDeviceId) {
                 client.subscribe(`hexapod/${camDeviceId}/telemetry`)
@@ -126,7 +128,18 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
                     setAiMessages(prev => [...prev.slice(-49), msg])
                 } catch (e) {}
             } else if (topic.endsWith("/ai/status") && !isCamTopic) {
-                try { setAiStatus(JSON.parse(payload)) } catch (e) {}
+                try {
+                    const statusObj = JSON.parse(payload)
+                    setAiStatus(statusObj)
+                    if (statusObj.memory) {
+                        setMemoryState(statusObj.memory)
+                    }
+                } catch (e) {}
+            } else if (topic.endsWith("/ai/memory/state") && !isCamTopic) {
+                try {
+                    const memObj = JSON.parse(payload)
+                    setMemoryState(memObj)
+                } catch (e) {}
             } else if (topic.endsWith("/audio/status") && !isCamTopic) {
                 try { setAudioStatus(JSON.parse(payload)) } catch (e) {}
             }
@@ -196,6 +209,11 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         clientRef.current.publish(`hexapod/${deviceId}/ai/config`, JSON.stringify(payload))
     }, [isConnected, deviceId])
 
+    const publishAiMemory = useCallback((payload) => {
+        if (!clientRef.current || !isConnected) return
+        clientRef.current.publish(`hexapod/${deviceId}/ai/memory/cmd`, JSON.stringify(payload))
+    }, [isConnected, deviceId])
+
     const publishAudio = useCallback((payload) => {
         if (!clientRef.current || !isConnected) return
         clientRef.current.publish(`hexapod/${deviceId}/audio`, JSON.stringify(payload))
@@ -213,10 +231,12 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         aiMessages,
         aiStatus,
         audioStatus,
+        memoryState,
         publishThrottled,
         publishImmediate,
         publishAi,
         publishAiConfig,
+        publishAiMemory,
         publishAudio,
         clearLogs,
         clearAiMessages,

@@ -275,7 +275,9 @@ export function expandGaitSequence(walkSequence, stepsPerFrame = 3, loopCount = 
 
     let repeatedPoses = []
     for (let l = 0; l < Math.max(1, loopCount); l++) {
-        repeatedPoses = repeatedPoses.concat(rawPoses)
+        // Drop duplicate wrap-around boundary frame to prevent seam stutter
+        const slice = (l > 0 && rawPoses.length > 1) ? rawPoses.slice(1) : rawPoses
+        repeatedPoses = repeatedPoses.concat(slice)
     }
 
     let smoothFrames = []
@@ -290,7 +292,22 @@ export function expandGaitSequence(walkSequence, stepsPerFrame = 3, loopCount = 
 /**
  * Synthesizes walking and turning gait frames with true 3D body rotation
  */
-export async function generateLocomotionFrames(actionId, dimensions, durationMs = 3000, startPose = DEFAULT_POSE) {
+export async function generateParametricPoseFramesAsync(motionPayload, dimensions, startPose = DEFAULT_POSE, steps = 15) {
+    const p = motionPayload || {}
+    const tx = (p.pos_x || p.tx || 0) / 100.0
+    const ty = -(p.pos_y || p.ty || 0) / 100.0
+    const tz = (p.pos_z || p.tz || 0) / 132.0
+    const rx = -(p.roll || p.rx || 0)
+    const ry = -(p.pitch || p.ry || 0)
+    const rz = -(p.yaw || p.rz || 0)
+    const hipStance = p.hip_stance !== undefined ? p.hip_stance : 20
+    const legStance = p.leg_stance !== undefined ? p.leg_stance : 0
+
+    const targetPose = getIkPose(dimensions, { tx, ty, tz, rx, ry, rz, hipStance, legStance })
+    return buildSequenceFromKeyframesAsync([startPose, targetPose], steps)
+}
+
+export async function generateLocomotionFrames(actionId, dimensions, durationMs = 3000, startPose = DEFAULT_POSE, customGaitParams = null) {
     const isSpin = actionId === "spin"
     const isTurnLeft = actionId === "turn_left"
     const isTurnRight = actionId === "turn_right"
@@ -301,35 +318,27 @@ export async function generateLocomotionFrames(actionId, dimensions, durationMs 
     const gaitParams = {
         ...DEFAULT_GAIT_PARAMS,
         hipSwing: isSpin ? 35 : 25,
-        liftSwing: 38,
+        liftSwing: customGaitParams?.step_height || 38,
         stepCount: 5,
+        ...(customGaitParams || {}),
     }
 
     const walkSeq = getWalkSequence(dimensions, gaitParams, "tripod", walkMode)
     if (!walkSeq) return [{ pose: startPose, twist: 0 }, { pose: DEFAULT_POSE, twist: 0 }]
 
-    const loopCount = isSpin ? 4 : isRotate ? 2 : Math.max(2, Math.round(durationMs / 1000))
-    const rawPoses = expandGaitSequence(walkSeq, 3, loopCount)
+    // 1 loop stride cycle ≈ 1.0s. Calculate continuous loop count for exact duration
+    const loops = Math.max(1, Math.round(durationMs / 1000))
+    const rawPoses = expandGaitSequence(walkSeq, 3, loops)
 
     if (isBackward) {
         rawPoses.reverse()
     }
 
-    // Set heading twist target in degrees
-    let targetTwist = 0
-    if (isSpin) {
-        targetTwist = 360
-    } else if (isTurnLeft) {
-        targetTwist = 90
-    } else if (isTurnRight) {
-        targetTwist = -90
-    }
-
     const totalSteps = rawPoses.length
     const frames = []
 
-    // 1. Lead-in blend from startPose
-    const leadInSteps = 6
+    // 1. Smooth lead-in blend from starting stance
+    const leadInSteps = 4
     for (let i = 0; i <= leadInSteps; i++) {
         const t = i / leadInSteps
         const ease = quinticEase(t)
@@ -339,25 +348,23 @@ export async function generateLocomotionFrames(actionId, dimensions, durationMs 
         })
     }
 
-    // 2. Active Locomotion with progressive heading rotation
+    // 2. Active Locomotion (Tripod Kinematics keep feet grounded naturally)
     for (let i = 0; i < totalSteps; i++) {
-        const progress = totalSteps > 1 ? i / (totalSteps - 1) : 0
-        const currentTwist = isRotate ? targetTwist * progress : 0
         frames.push({
             pose: rawPoses[i],
-            twist: currentTwist
+            twist: 0
         })
     }
 
-    // 3. Lead-out blend to neutral standing pose
-    const leadOutSteps = 6
+    // 3. Smooth lead-out blend to neutral standing pose
+    const leadOutSteps = 4
     const lastPose = rawPoses[rawPoses.length - 1] || DEFAULT_POSE
     for (let i = 1; i <= leadOutSteps; i++) {
         const t = i / leadOutSteps
         const ease = quinticEase(t)
         frames.push({
             pose: blendTwoPoses(lastPose, DEFAULT_POSE, ease),
-            twist: isRotate ? targetTwist : 0
+            twist: 0
         })
     }
 

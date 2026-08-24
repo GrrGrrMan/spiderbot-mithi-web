@@ -40,8 +40,10 @@ export const HubHeader = ({
                 cursor: isDragging ? "grabbing" : "grab",
                 userSelect: "none",
                 touchAction: "none",
+                flexShrink: 0,
             }}
         >
+
             {/* 3-Dashes Menu Dropdown */}
             <div style={{ position: "relative" }}>
                 <button

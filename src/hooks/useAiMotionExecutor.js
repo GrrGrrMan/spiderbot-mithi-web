@@ -5,7 +5,8 @@ import { buildServoBatchPayload } from "../utils/servoMapper"
 import { 
     generatePresetFramesAsync, 
     generateLocomotionFrames, 
-    generateDynamicSequenceFramesAsync 
+    generateDynamicSequenceFramesAsync,
+    generateParametricPoseFramesAsync
 } from "../hexapod/solvers/motionSynthesizer"
 import { usePoseFrameStream } from "./usePoseFrameStream"
 
@@ -49,8 +50,31 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
         }
     )
 
+    const playParametricPose = useCallback(
+        (motionPayload, actionName = "Custom Pose", skipPublish = false) => {
+            if (!motionPayload) return
+            stopStream()
+            stopLocomotionTimer()
+            setActiveExecutingAction(actionName)
+            const reqId = ++activeReqIdRef.current
+            const dims = paramsRef.current?.dimensions || DEFAULT_DIMENSIONS
+            const startPose = paramsRef.current?.pose || DEFAULT_POSE
+
+            if (!skipPublish) {
+                publishImmediate("hexapod/cmd", motionPayload)
+            }
+
+            generateParametricPoseFramesAsync(motionPayload, dims, startPose, 15).then(frames => {
+                if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
+                    setActiveFrames(frames)
+                }
+            })
+        },
+        [stopStream, stopLocomotionTimer, publishImmediate]
+    )
+
     const playSequence = useCallback(
-        (actionPayload, actionName) => {
+        (actionPayload, actionName, skipPublish = false) => {
             if (!actionPayload) return
             stopStream()
             stopLocomotionTimer()
@@ -60,10 +84,10 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
             const dims = paramsRef.current?.dimensions || DEFAULT_DIMENSIONS
             const startPose = paramsRef.current?.pose || DEFAULT_POSE
 
-            // 1. Transmit sequence command to physical ESP32-S3 node
-            publishImmediate("hexapod/cmd", actionPayload)
+            if (!skipPublish) {
+                publishImmediate("hexapod/cmd", actionPayload)
+            }
 
-            // 2. Animate 3D Web-UI model dynamically
             if (actionPayload.keyframes && Array.isArray(actionPayload.keyframes)) {
                 generateDynamicSequenceFramesAsync(actionPayload.keyframes, dims, startPose).then(frames => {
                     if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
@@ -82,14 +106,14 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
     )
 
     const playLocomotion = useCallback(
-        (actionId, durationMs = 3000) => {
+        (actionId, durationMs = 3000, customGaitParams = null) => {
             stopStream()
             setActiveExecutingAction(actionId)
             const reqId = ++activeReqIdRef.current
             const dims = paramsRef.current?.dimensions || DEFAULT_DIMENSIONS
             const startPose = paramsRef.current?.pose || DEFAULT_POSE
 
-            generateLocomotionFrames(actionId, dims, durationMs, startPose).then(frames => {
+            generateLocomotionFrames(actionId, dims, durationMs, startPose, customGaitParams).then(frames => {
                 if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
                     setActiveFrames(frames)
                 }
@@ -123,8 +147,9 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
     )
 
     const triggerAction = useCallback(
-        (action, jointParams = null) => {
+        (action, jointParams = null, options = {}) => {
             if (!action && !jointParams) return
+            const skipPublish = Boolean(options.skipPublish)
 
             if (action === "single_joint" || action?.id === "single_joint") {
                 handleSingleJoint(jointParams || action?.joint_params)
@@ -134,38 +159,48 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
             const { payload, topic, duration_ms, name, id } = action
 
             if (topic === "audio") {
-                publishAudio(payload)
+                if (!skipPublish) publishAudio(payload)
             } else if (payload?.type === "sequence" || payload?.type === "preset" || id?.startsWith("preset_")) {
-                playSequence(payload, name)
+                playSequence(payload, name, skipPublish)
             } else if (payload?.type === "motion") {
                 stopLocomotionTimer()
                 setActiveExecutingAction(name)
-                publishImmediate("hexapod/cmd", payload)
+
+                const isLocomotion = (payload.vx && payload.vx !== 0) || (payload.vy && payload.vy !== 0) || (payload.omega && payload.omega !== 0)
+                const isPoseOnly = !isLocomotion && (payload.pos_z !== undefined || payload.roll !== undefined || payload.pitch !== undefined || payload.yaw !== undefined || payload.hip_stance !== undefined || payload.leg_stance !== undefined)
+                const effectiveDuration = payload.duration_ms || duration_ms || 3000
+
                 if (id === "stop") {
                     stopStream()
                     setActiveExecutingAction(null)
+                    if (!skipPublish) publishImmediate("hexapod/cmd", payload)
                     onUpdate("pose", { pose: DEFAULT_POSE })
+                } else if (isPoseOnly) {
+                    playParametricPose(payload, name, skipPublish)
                 } else {
-                    playLocomotion(id, duration_ms || 3000)
-                    
-                    motionIntervalRef.current = setInterval(() => {
+                    if (!skipPublish) {
                         publishImmediate("hexapod/cmd", payload)
-                    }, 1000)
+                        motionIntervalRef.current = setInterval(() => {
+                            publishImmediate("hexapod/cmd", payload)
+                        }, 1000)
+                    }
 
-                    if (duration_ms > 0) {
+                    playLocomotion(id, effectiveDuration, payload)
+
+                    if (effectiveDuration > 0 && !skipPublish) {
                         motionTimerRef.current = setTimeout(() => {
                             stopLocomotionTimer()
                             publishImmediate("hexapod/cmd", { ...payload, vx: 0, vy: 0, omega: 0 })
-                        }, duration_ms)
+                        }, effectiveDuration)
                     }
                 }
             } else {
                 stopLocomotionTimer()
                 setActiveExecutingAction(name)
-                publishImmediate("hexapod/cmd", payload)
+                if (!skipPublish) publishImmediate("hexapod/cmd", payload)
             }
         },
-        [publishAudio, publishImmediate, playSequence, playLocomotion, stopStream, onUpdate, handleSingleJoint, stopLocomotionTimer]
+        [publishAudio, publishImmediate, playSequence, playLocomotion, playParametricPose, stopStream, onUpdate, handleSingleJoint, stopLocomotionTimer]
     )
 
     const stopAll = useCallback(() => {

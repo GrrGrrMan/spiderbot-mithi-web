@@ -78,6 +78,14 @@ class WalkingGaitsPage extends Component {
         window.addEventListener("hardware-watchdog-brake", this.reset)
     }
 
+    componentDidUpdate = (prevProps) => {
+        // If AI triggers an action externally, pause internal page animation loop
+        if (this.props.activeExecutingAction && !prevProps.activeExecutingAction && this.state.isAnimating) {
+            if (this.intervalID) clearInterval(this.intervalID)
+            this.setState({ isAnimating: false })
+        }
+    }
+
     componentWillUnmount = () => {
         clearInterval(this.intervalID)
         if (this.motionHeartbeatID) clearInterval(this.motionHeartbeatID)

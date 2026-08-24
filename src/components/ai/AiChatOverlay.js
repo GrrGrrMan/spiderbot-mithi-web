@@ -17,6 +17,8 @@ export const AiChatOverlay = ({
     isOpen,
     onToggle,
     publishImmediate = () => {},
+    publishAiMemory = () => {},
+    memoryState = null,
     aiStatus = null,
     audioStatus = null,
     isConnected = false,
@@ -90,7 +92,9 @@ export const AiChatOverlay = ({
                         width: "440px",
                         maxWidth: "calc(100vw - 20px)",
                         maxHeight: "calc(100vh - 85px)",
-                        overflowY: "auto",
+                        display: "flex",
+                        flexDirection: "column",
+                        overflow: "hidden",
                         zIndex: 80,
                         backgroundColor: "rgba(15, 23, 42, 0.96)",
                         backdropFilter: "blur(14px)",
@@ -140,7 +144,7 @@ export const AiChatOverlay = ({
                     />
 
                     {!isMinimized && (
-                        <div className="no-drag" style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "10px" }}>
+                        <div className="no-drag" style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "10px", overflowY: "auto", flex: 1, paddingRight: "4px" }}>
                             {activeTab === "ai" ? (
                                 <HubAiView
                                     aiOnline={aiChat?.aiOnline}
@@ -171,6 +175,8 @@ export const AiChatOverlay = ({
                                     setSmartSpeaker={setSmartSpeaker}
                                     sentinel={sentinel}
                                     sentinelLog={sentinelLog}
+                                    memoryState={memoryState || aiChat?.memoryState}
+                                    publishAiMemory={publishAiMemory || aiChat?.publishAiMemory}
                                 />
                             ) : (
                                 <HubSystemView

@@ -85,9 +85,8 @@ const JudgementPanel = ({
         if (a) triggerAction(a, last.joint_params)
     }, [aiMessages, triggerAction])
 
-    const { isListening, wakeWordState, lastTranscript, lastAcceptedCommand, micError, filterAndDispatch } =
+    const { isListening, wakeWordState, lastTranscript, lastAcceptedCommand, micError, handleSentinelEvent } =
         useContinuousWakeWord({
-            onCommand: handleVoiceCommand,
             publishAi,
             aiOnline,
             audioStatus,
@@ -97,14 +96,14 @@ const JudgementPanel = ({
     useEffect(() => {
         if (!aiMessages || !aiMessages.length) return
         const lastMsg = aiMessages[aiMessages.length - 1]
-        if (!lastMsg || lastMsg.type !== "transcription" || !lastMsg.content) return
+        if (!lastMsg || lastMsg.type !== "sentinel_event") return
 
-        const msgId = `${lastMsg.timestamp || ""}_${lastMsg.content}`
+        const msgId = `${lastMsg.timestamp || ""}_${lastMsg.state}_${lastMsg.transcript || ""}`
         if (lastProcessedMsgRef.current === msgId) return
         lastProcessedMsgRef.current = msgId
 
-        filterAndDispatch(lastMsg.content)
-    }, [aiMessages, filterAndDispatch])
+        handleSentinelEvent(lastMsg)
+    }, [aiMessages, handleSentinelEvent])
 
     useEffect(() => {
         onMount(SECTION_NAMES.judgement || "Judgement")

@@ -29,6 +29,9 @@ function MainLayout() {
     const [revision, setRevision] = useState(0)
     const [isAiOverlayOpen, setIsAiOverlayOpen] = useState(false)
 
+    const activeExecutingActionRef = useRef(null)
+    const stopAllRef = useRef(null)
+
     const [activeView, setActiveView] = useState(() => {
         if (typeof window === "undefined") return "sim"
         const params = new URLSearchParams(window.location.search)
@@ -50,13 +53,19 @@ function MainLayout() {
         aiMessages,
         aiStatus,
         audioStatus,
+        memoryState,
         publishAi,
         publishAiConfig,
+        publishAiMemory,
         publishAudio,
     } = useMqtt()
 
+    const manageState = useCallback((updateType, newParam, options = {}) => {
+        // If human manually tweaks a slider/joint, preempt automated AI animations
+        if (!options?.fromStream && activeExecutingActionRef.current && stopAllRef.current) {
+            stopAllRef.current()
+        }
 
-    const manageState = useCallback((updateType, newParam) => {
         setHexapod(prevHexapod => {
             const nextHexapod = updateHexapod(updateType, newParam, prevHexapod)
             setRevision(prev => prev + 1)
@@ -87,12 +96,17 @@ function MainLayout() {
         onUpdate: manageState,
     })
 
+    activeExecutingActionRef.current = activeExecutingAction
+    stopAllRef.current = stopAll
+
     // ── Single Authoritative AI Chat & Directive Engine ──
     const aiChat = useAiChat({
         aiMessages,
         aiStatus,
+        memoryState,
         publishAi,
         publishAiConfig,
+        publishAiMemory,
         triggerAction,
     })
 
@@ -125,38 +139,40 @@ function MainLayout() {
     }, [aiChat.aiOnline, aiChat.ACTIONS, publishAi, triggerAction, speakFeedback])
 
     const sentinel = useContinuousWakeWord({
-        onCommand: handleVoiceCommand,
         publishAi,
         aiOnline: aiChat.aiOnline,
         audioStatus,
-        enabled: smartSpeaker
+        enabled: smartSpeaker,
     })
 
     useEffect(() => {
         if (!aiMessages || !aiMessages.length) return
         const lastMsg = aiMessages[aiMessages.length - 1]
-        if (!lastMsg || lastMsg.type !== "transcription" || !lastMsg.content) return
+        if (!lastMsg || lastMsg.type !== "sentinel_event") return
 
-        const msgId = `${lastMsg.timestamp || ""}_${lastMsg.content}`
+        const msgId = `${lastMsg.timestamp || ""}_${lastMsg.state}_${lastMsg.transcript || ""}`
         if (lastProcessedMsgRef.current === msgId) return
         lastProcessedMsgRef.current = msgId
 
-        sentinel.filterAndDispatch(lastMsg.content)
+        sentinel.handleSentinelEvent(lastMsg)
     }, [aiMessages, sentinel])
 
     useEffect(() => {
         if (!aiMessages || !aiMessages.length) return
         const last = aiMessages[aiMessages.length - 1]
-        if (!last || (last.type !== "directive" && !last.action_id && !last.action && !last.joint_params)) {
-            return
-        }
+        if (!last) return
 
-        const key = `${aiMessages.length}|${last.role}|${last.type}|${last.content || last.action_id || last.action || ""}`
+        const isActionMsg = last.type === "directive" || last.action_id || last.action || last.joint_params || last.type === "sequence" || last.type === "motion"
+        if (!isActionMsg) return
+
+        const key = `${aiMessages.length}|${last.role}|${last.type}|${last.action_id || last.action || last.name || (last.payload && last.payload.name) || ""}`
         if (lastDirectiveKeyRef.current === key) return
         lastDirectiveKeyRef.current = key
 
         const a = resolveAction(last, aiChat.ACTIONS)
-        if (a) triggerAction(a, last.joint_params)
+        if (a && a.id !== "stop") {
+            triggerAction(a, last.joint_params, { skipPublish: true })
+        }
     }, [aiMessages, triggerAction, aiChat.ACTIONS])
 
     // Hardware Watchdog Sync: Instantly stop UI animations if firmware applies emergency brakes
@@ -184,11 +200,14 @@ function MainLayout() {
             publishThrottled={publishThrottled}
             publishImmediate={publishImmediate}
             publishAi={publishAi}
+            publishAiConfig={publishAiConfig}
+            publishAiMemory={publishAiMemory}
             publishAudio={publishAudio}
             aiMessages={aiMessages}
             clearAiMessages={clearAiMessages}
             aiStatus={aiStatus}
             audioStatus={audioStatus}
+            memoryState={memoryState}
             isConnected={isConnected}
             aiDeviceId={deviceId}
             camConfig={camConfig}
@@ -222,11 +241,14 @@ function MainLayout() {
                         onToggle={() => setIsAiOverlayOpen(prev => !prev)}
                         publishImmediate={publishImmediate}
                         publishAi={publishAi}
+                        publishAiConfig={publishAiConfig}
+                        publishAiMemory={publishAiMemory}
                         publishAudio={publishAudio}
                         aiMessages={aiMessages}
                         clearAiMessages={clearAiMessages}
                         aiStatus={aiStatus}
                         audioStatus={audioStatus}
+                        memoryState={memoryState}
                         isConnected={isConnected}
                         aiDeviceId={deviceId}
                         logs={logs}                 

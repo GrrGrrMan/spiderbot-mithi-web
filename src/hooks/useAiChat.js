@@ -2,14 +2,17 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import aiActionsData from "../constants/aiActions.json"
 import { useVoiceRecorder } from "./useVoiceRecorder"
+import { resolveAction } from "../utils/aiActionResolver"
 
 const STATIC_ACTIONS = aiActionsData.actions || []
 
 export const useAiChat = ({
     aiMessages = [],
     aiStatus = null,
+    memoryState = null,
     publishAi = () => {},
     publishAiConfig = () => {},
+    publishAiMemory = () => {},
     triggerAction = () => {},
 }) => {
     const [messages, setMessages] = useState([])
@@ -26,6 +29,13 @@ export const useAiChat = ({
 
     // ── Collapsible Settings Drawer State ──
     const [isConfigOpen, setIsConfigOpen] = useState(false)
+
+    // Dynamic schema resolution from Pi-Hub
+    const dynamicActions = (aiStatus?.actions && Array.isArray(aiStatus.actions) && aiStatus.actions.length > 0)
+        ? aiStatus.actions
+        : STATIC_ACTIONS
+
+    const wakeWords = aiStatus?.sentinel?.wake_words || ["hey spider", "hey hexapod", "ok spider"]
 
     const aiOnline = Boolean(aiStatus && aiStatus.state !== "offline")
 
@@ -116,10 +126,10 @@ export const useAiChat = ({
             return
         }
 
-        if (lastMsg.type === "directive" && lastMsg.action_id) {
-            const matched = STATIC_ACTIONS.find(a => a.id === lastMsg.action_id)
-            if (matched && triggerActionRef.current) {
-                triggerActionRef.current(matched)
+        if (lastMsg.type === "directive" || lastMsg.action_id || lastMsg.keyframes || lastMsg.type === "sequence" || lastMsg.type === "motion") {
+            const resolved = resolveAction(lastMsg, dynamicActions)
+            if (resolved && resolved.id !== "stop" && triggerActionRef.current) {
+                triggerActionRef.current(resolved, lastMsg.joint_params, { skipPublish: true })
             }
             return
         }
@@ -139,7 +149,7 @@ export const useAiChat = ({
                 setTaskStatus(prev => (prev === "running" ? "completed" : prev))
             }
         }
-    }, [aiMessages])
+    }, [aiMessages, dynamicActions])
 
     const handleSend = useCallback(() => {
         const text = input.trim()
@@ -188,6 +198,37 @@ export const useAiChat = ({
         }
     }, [publishAiConfig])
 
+    // ── Memory Manager Command Handlers ──
+    const handleSetMemoryMode = useCallback((mode) => {
+        if (publishAiMemory) {
+            publishAiMemory({ action: "set_mode", mode })
+        }
+    }, [publishAiMemory])
+
+    const handleSetMemoryFact = useCallback((key, value) => {
+        if (publishAiMemory && key && value) {
+            publishAiMemory({ action: "set_fact", key, value })
+        }
+    }, [publishAiMemory])
+
+    const handleDeleteMemoryFact = useCallback((key) => {
+        if (publishAiMemory && key) {
+            publishAiMemory({ action: "delete_fact", key })
+        }
+    }, [publishAiMemory])
+
+    const handleClearMemorySession = useCallback(() => {
+        if (publishAiMemory) {
+            publishAiMemory({ action: "clear_session" })
+        }
+    }, [publishAiMemory])
+
+    const handleWipeAllMemory = useCallback(() => {
+        if (publishAiMemory) {
+            publishAiMemory({ action: "clear_all" })
+        }
+    }, [publishAiMemory])
+
     return {
         messages,
         setMessages,
@@ -199,7 +240,8 @@ export const useAiChat = ({
         stopMic,
         micBlocked,
         aiOnline,
-        ACTIONS: STATIC_ACTIONS,
+        ACTIONS: dynamicActions,
+        wakeWords,
         handleExecuteAction,
         taskStatus,
         isThinking,
@@ -211,6 +253,14 @@ export const useAiChat = ({
         isConfigOpen,
         setIsConfigOpen,
         handleUpdateConfig,
+        // Memory states & actions
+        memoryState,
+        publishAiMemory,
+        handleSetMemoryMode,
+        handleSetMemoryFact,
+        handleDeleteMemoryFact,
+        handleClearMemorySession,
+        handleWipeAllMemory,
     }
 }
 

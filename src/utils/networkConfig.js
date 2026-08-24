@@ -5,9 +5,9 @@
  * Resolves Pi-Hub location whether running in Local Dev (PC) or Production (Nginx on Pi).
  */
 
-const DEFAULT_PI_MDNS_HOST = "spider-w.local"
-const DEFAULT_HOTSPOT_GATEWAY = "192.168.4.1"
-const DEFAULT_MQTT_WS_PORT = 9001
+export const DEFAULT_PI_MDNS_HOST = "spider-w.local"
+export const DEFAULT_HOTSPOT_GATEWAY = "192.168.4.1"
+export const DEFAULT_MQTT_WS_PORT = 9001
 
 export const isLocalhost = (hostname) => {
     return (

@@ -37,17 +37,30 @@ export const HubAiView = ({
     setSmartSpeaker,
     sentinel,
     sentinelLog,
+    memoryState,
+    publishAiMemory,
 }) => (
     <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", background: smartSpeaker ? "rgba(50, 255, 126, 0.1)" : "rgba(15, 23, 42, 0.6)", borderRadius: "6px", border: `1px solid ${smartSpeaker ? "var(--c1-green)" : "rgba(41, 128, 185, 0.3)"}` }}>
+        <div
+            title="When active, say 'Hey Spider <action>' or 'Hey Hexapod <action>' to trigger motions hands-free."
+            style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "6px 10px",
+                background: smartSpeaker ? "rgba(50, 255, 126, 0.08)" : "rgba(15, 23, 42, 0.6)",
+                borderRadius: "6px",
+                border: `1px solid ${smartSpeaker ? "rgba(50, 255, 126, 0.3)" : "rgba(41, 128, 185, 0.25)"}`,
+            }}
+        >
             <span style={{ fontSize: "0.75rem", fontWeight: "bold", color: smartSpeaker ? "var(--c1-green)" : "#94a3b8" }}>
-                <span role="img" aria-label="mic">{smartSpeaker ? "🎙️" : "🔇"}</span> Smart Speaker Mode
+                <span role="img" aria-label="mic">{smartSpeaker ? "🎙️" : "🔇"}</span> Smart Speaker Sentinel
             </span>
             <button
                 type="button"
                 onClick={() => setSmartSpeaker(!smartSpeaker)}
                 style={{
-                    padding: "4px 10px",
+                    padding: "3px 10px",
                     borderRadius: "12px",
                     backgroundColor: smartSpeaker ? "rgba(50, 255, 126, 0.2)" : "rgba(23, 33, 43, 0.8)",
                     border: `1px solid ${smartSpeaker ? "var(--c1-green)" : "rgba(41, 128, 185, 0.5)"}`,
@@ -57,7 +70,7 @@ export const HubAiView = ({
                     cursor: "pointer",
                 }}
             >
-                {smartSpeaker ? "ON" : "OFF"}
+                {smartSpeaker ? "ACTIVE" : "DISABLED"}
             </button>
         </div>
 
@@ -68,7 +81,6 @@ export const HubAiView = ({
                 micError={sentinel.micError} 
                 lastTranscript={sentinel.lastTranscript} 
                 lastAcceptedCommand={sentinel.lastAcceptedCommand} 
-                actionLog={sentinelLog} 
             />
         )}
 
@@ -85,6 +97,8 @@ export const HubAiView = ({
             isOpen={isConfigOpen}
             aiStatus={aiStatus}
             onUpdateConfig={onUpdateConfig}
+            memoryState={memoryState}
+            publishAiMemory={publishAiMemory}
         />
 
         <AiTaskStepper
@@ -117,3 +131,5 @@ export const HubAiView = ({
         />
     </div>
 )
+
+export default HubAiView

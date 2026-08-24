@@ -2,17 +2,12 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { to16kPcm, buildWav, bytesToBase64 } from "../utils/aiAudio"
 
-const WAKE_WORD_REGEX = /^(?:hey|ok|okay|hi|hello)[\s,.:;!?-]+(?:spider|hexapod)\b[\s,.:;!?-]*(.+)$/i
-const STANDALONE_WAKE_REGEX = /^(?:hey|ok|okay|hi|hello)[\s,.:;!?-]+(?:spider|hexapod)[\s,.:;!?-]*$/i
-
 export const useContinuousWakeWord = ({
-    onCommand = () => {},
     publishAi = () => {},
     aiOnline = false,
     audioStatus = null,
     isMuted = false,
     enabled = true,
-    listenTimeoutMs = 6000,
 }) => {
     const [isListening, setIsListening] = useState(false)
     const [wakeWordState, setWakeWordState] = useState("idle")
@@ -23,8 +18,6 @@ export const useContinuousWakeWord = ({
     const isMountedRef = useRef(true)
     const myVadRef = useRef(null)
     const isInitializingRef = useRef(false)
-    const isPromptActiveRef = useRef(false)
-    const promptTimerRef = useRef(null)
 
     // Keep dynamic prop references up-to-date across re-renders
     const isMutedRef = useRef(isMuted)
@@ -32,8 +25,6 @@ export const useContinuousWakeWord = ({
     const audioStatusRef = useRef(audioStatus)
     audioStatusRef.current = audioStatus
 
-    const onCommandRef = useRef(onCommand)
-    onCommandRef.current = onCommand
     const publishAiRef = useRef(publishAi)
     publishAiRef.current = publishAi
     const aiOnlineRef = useRef(aiOnline)
@@ -41,72 +32,18 @@ export const useContinuousWakeWord = ({
     const enabledRef = useRef(enabled)
     enabledRef.current = enabled
 
-    const clearPromptTimer = () => {
-        if (promptTimerRef.current) {
-            clearTimeout(promptTimerRef.current)
-            promptTimerRef.current = null
-        }
-        isPromptActiveRef.current = false
-    }
-
-    const openListeningWindow = useCallback(() => {
-        clearPromptTimer()
-        isPromptActiveRef.current = true
-        setWakeWordState("listening_prompt")
-        promptTimerRef.current = setTimeout(() => {
-            isPromptActiveRef.current = false
-            setWakeWordState("idle")
-        }, listenTimeoutMs)
-    }, [listenTimeoutMs])
-
-    const filterAndDispatch = useCallback((rawTranscript) => {
-        if (!rawTranscript) return false
-
-        // Strip microphone emojis, wrapping quotes, and punctuation
-        let trimmed = rawTranscript.trim()
-        trimmed = trimmed.replace(/^🎤\s*["']?|["']?$/g, "").replace(/^[^a-zA-Z0-9]+/, "").trim()
-        if (!trimmed) return false
-
-        setLastTranscript(trimmed)
-
-        // 1. Standalone Wake Word ("Hey Spider")
-        if (STANDALONE_WAKE_REGEX.test(trimmed)) {
-            openListeningWindow()
-            return true
-        }
-
-        // 2. Wake Word + Directive Command ("Hey Spider, walk forward")
-        const match = trimmed.match(WAKE_WORD_REGEX)
-        if (match && match[1]) {
-            const extractedCommand = match[1].trim()
-            if (extractedCommand.length >= 2) {
-                clearPromptTimer()
-                setWakeWordState("recognized")
-                setLastAcceptedCommand(extractedCommand)
-                onCommandRef.current(extractedCommand, trimmed)
-                return true
-            }
-        }
-
-        // 3. Command inside active listening prompt window
-        if (isPromptActiveRef.current) {
-            clearPromptTimer()
-            setWakeWordState("recognized")
-            setLastAcceptedCommand(trimmed)
-            onCommandRef.current(trimmed, trimmed)
-            return true
-        }
-
-        // 4. Dropped ambient chatter / unrelated conversation
-        setWakeWordState("ignored")
-        return false
-    }, [openListeningWindow])
+    // Receive authoritative wake-word & intent states broadcasted from the Pi-Hub
+    const handleSentinelEvent = useCallback((eventMsg) => {
+        if (!eventMsg) return
+        setWakeWordState(eventMsg.state || "idle")
+        if (eventMsg.transcript) setLastTranscript(eventMsg.transcript)
+        if (eventMsg.command) setLastAcceptedCommand(eventMsg.command)
+    }, [])
 
     useEffect(() => {
         isMountedRef.current = true
         return () => {
             isMountedRef.current = false
-            clearPromptTimer()
             if (myVadRef.current) {
                 myVadRef.current.destroy()
                 myVadRef.current = null
@@ -199,6 +136,6 @@ export const useContinuousWakeWord = ({
         lastTranscript,
         lastAcceptedCommand,
         micError,
-        filterAndDispatch,
+        handleSentinelEvent,
     }
 }
