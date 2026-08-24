@@ -80,7 +80,7 @@ export async function generateLocomotionFrames(
 
     const gaitParams = {
         ...DEFAULT_GAIT_PARAMS,
-        hipSwing: isSpin ? 30 : 25,
+        hipSwing: isSpin ? 35 : 25,
         liftSwing: customGaitParams?.step_height || 38,
         stepCount: 5,
         ...(customGaitParams || {}),
@@ -89,24 +89,7 @@ export async function generateLocomotionFrames(
     const walkSeq = getWalkSequence(dimensions, gaitParams, "tripod", walkMode)
     if (!walkSeq) return [{ pose: startPose, twist: initialHeading }, { pose: DEFAULT_POSE, twist: initialHeading }]
 
-    // Total animation frames at 60 FPS
-    const totalTargetFrames = Math.max(30, Math.round((durationMs / 1000) * 60))
-    const durationS = durationMs / 1000.0
-
-    // Calibrated turn rate (deg/s): default 25°/s for turn, 50°/s for spin
-    const omegaRate = Math.abs(customGaitParams?.omega) || (isSpin ? 50 : 25)
-    // Turn Left / Spin: CCW (+1). Turn Right: CW (-1).
-    const rotationSign = isTurnRight ? -1 : 1
-    const totalRotationDeg = isRotate ? (rotationSign * omegaRate * durationS) : 0
-
-    // Physical coupling: 1 full tripod cycle sweeps 4 * hipSwing degrees.
-    // Cycle duration is matched to omegaRate so that foot velocity relative to ground is strictly 0.0.
-    const rotationPerCycle = 4 * gaitParams.hipSwing
-    const totalCycles = isRotate
-        ? Math.max(0.1, (omegaRate * durationS) / rotationPerCycle)
-        : Math.max(0.5, durationS / (customGaitParams?.cycle_time || 1.0))
-
-    // Extract cyclic discrete poses (20 poses for stepCount = 5)
+    // Extract cyclic discrete poses
     const legKeys = Object.keys(walkSeq)
     const cyclePoseCount = walkSeq[legKeys[0]]?.alpha?.length || 0
     const rawCyclePoses = []
@@ -123,10 +106,18 @@ export async function generateLocomotionFrames(
         rawCyclePoses.push(pose)
     }
 
-    // When turning right (CW) or walking backward, step the legs in reverse
-    if (isBackward || (isRotate && isTurnRight && !isSpin)) {
-        rawCyclePoses.reverse()
-    }
+    // MITHI'S EXACT KINEMATIC COUPLING:
+    // Twist exactly maps to discrete pose index
+    const deltaTwist = (gaitParams.hipSwing * 2) / cyclePoseCount
+
+    const isForward = !(isBackward || (isRotate && isTurnRight && !isSpin))
+    const twistDir = isRotate ? (isForward ? 1 : -1) : 0
+    const poseDir = isForward ? 1 : -1
+
+    // Framerate targeting
+    const totalTargetFrames = Math.max(30, Math.round((durationMs / 1000) * 60))
+    const cycleTimeS = customGaitParams?.cycle_time || 0.8
+    const framesPerCycle = Math.round(cycleTimeS * 60)
 
     const leadInSteps = 10
     const leadOutSteps = 10
@@ -135,8 +126,9 @@ export async function generateLocomotionFrames(
     const frames = []
     const baseHeading = initialHeading || 0
 
-    // 1. Lead-in: Smooth ramp from current pose into start of gait cycle
-    const firstGaitPose = rawCyclePoses[0] || DEFAULT_POSE
+    // 1. Lead-in
+    const firstGaitIdx = isForward ? 0 : cyclePoseCount - 1
+    const firstGaitPose = rawCyclePoses[firstGaitIdx] || DEFAULT_POSE
     for (let i = 0; i < leadInSteps; i++) {
         const t = quinticEase(i / leadInSteps)
         frames.push({
@@ -145,28 +137,31 @@ export async function generateLocomotionFrames(
         })
     }
 
-    // 2. Steady state: Exact 60 FPS cyclic locomotion with zero foot slipping
-    const totalStepsInCycle = rawCyclePoses.length
+    // 2. Steady State
+    let finalHeading = baseHeading
+    let lastGaitPose = firstGaitPose
     for (let i = 0; i < steadyFramesCount; i++) {
-        const steadyProgress = i / (steadyFramesCount - 1)
-        const cycleProgress = (steadyProgress * totalCycles) % 1.0
-        const floatIndex = cycleProgress * totalStepsInCycle
-        const idx0 = Math.floor(floatIndex) % totalStepsInCycle
-        const idx1 = (idx0 + 1) % totalStepsInCycle
-        const intraStepT = floatIndex - Math.floor(floatIndex)
+        const stepsAdvanced = i * (cyclePoseCount / framesPerCycle)
+        const currentTwist = baseHeading + (stepsAdvanced * deltaTwist * twistDir)
 
-        const blendedPose = blendTwoPoses(rawCyclePoses[idx0], rawCyclePoses[idx1], intraStepT)
-        const currentTwist = isRotate ? (baseHeading + totalRotationDeg * steadyProgress) : baseHeading
+        let floatIndex = (stepsAdvanced * poseDir) % cyclePoseCount
+        if (floatIndex < 0) floatIndex += cyclePoseCount // wrap negative to positive array indices
+
+        const idx0 = Math.floor(floatIndex) % cyclePoseCount
+        const idx1 = (idx0 + 1) % cyclePoseCount
+        const t = floatIndex - Math.floor(floatIndex)
+
+        const blendedPose = blendTwoPoses(rawCyclePoses[idx0], rawCyclePoses[idx1], t)
 
         frames.push({
             pose: blendedPose,
             twist: currentTwist,
         })
+        finalHeading = currentTwist
+        lastGaitPose = blendedPose
     }
 
-    // 3. Lead-out: Return to stance while holding final achieved heading
-    const finalHeading = isRotate ? (baseHeading + totalRotationDeg) : baseHeading
-    const lastGaitPose = frames[frames.length - 1]?.pose || DEFAULT_POSE
+    // 3. Lead-out
     for (let i = 1; i <= leadOutSteps; i++) {
         const t = quinticEase(i / leadOutSteps)
         frames.push({
