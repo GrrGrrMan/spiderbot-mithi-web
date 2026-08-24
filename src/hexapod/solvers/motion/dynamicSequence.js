@@ -57,6 +57,5 @@ export async function generateDynamicSequenceFramesAsync(keyframes, dimensions, 
         convertedPoses.push(framePose)
     }
 
-    convertedPoses.push(DEFAULT_POSE)
     return await buildSequenceFromKeyframesAsync(convertedPoses, 15)
 }

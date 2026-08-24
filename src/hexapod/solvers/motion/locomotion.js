@@ -42,19 +42,26 @@ export function expandGaitSequence(walkSequence, stepsPerFrame = 3, loopCount = 
     return smoothFrames
 }
 
-export async function generateParametricPoseFramesAsync(motionPayload, dimensions, startPose = DEFAULT_POSE, steps = 15) {
+export async function generateParametricPoseFramesAsync(motionPayload, dimensions, startPose = DEFAULT_POSE, steps = 20) {
     const p = motionPayload || {}
     const tx = (p.pos_x || p.tx || 0) / 100.0
     const ty = -(p.pos_y || p.ty || 0) / 100.0
     const tz = (p.pos_z || p.tz || 0) / 132.0
-    const rx = -(p.roll || p.rx || 0)
-    const ry = -(p.pitch || p.ry || 0)
-    const rz = -(p.yaw || p.rz || 0)
+    // Correct Simulator Axis Mapping: Pitch is X-rotation (rx), Roll is Y-rotation (ry)
+    const rx = -(p.pitch !== undefined ? p.pitch : (p.rx || 0))
+    const ry = -(p.roll !== undefined ? p.roll : (p.ry || 0))
+    const rz = -(p.yaw !== undefined ? p.yaw : (p.rz || 0))
     const hipStance = p.hip_stance !== undefined ? p.hip_stance : 20
     const legStance = p.leg_stance !== undefined ? p.leg_stance : 0
 
     const targetPose = getIkPose(dimensions, { tx, ty, tz, rx, ry, rz, hipStance, legStance })
-    return buildSequenceFromKeyframesAsync([startPose, targetPose], steps)
+    const frames = await buildSequenceFromKeyframesAsync([startPose, targetPose], steps)
+    // Hold final pose for duration if specified
+    const durMs = p.duration_ms || 2000
+    const holdFramesCount = Math.max(1, Math.round((durMs / 1000) * 60) - steps)
+    const finalFrame = frames[frames.length - 1]
+    const heldFrames = Array(holdFramesCount).fill(finalFrame)
+    return frames.concat(heldFrames)
 }
 
 export async function generateLocomotionFrames(
@@ -67,7 +74,7 @@ export async function generateLocomotionFrames(
 ) {
     const isSpin = actionId === "spin"
     const isTurnLeft = actionId === "turn_left" || (customGaitParams && customGaitParams.omega < 0)
-    const isTurnRight = actionId === "turn_right" || (customGaitParams && customGaitParams.omega > 0)
+    const isTurnRight = actionId === "turn_right" || actionId === "rotate" || (customGaitParams && customGaitParams.omega > 0)
     const isRotate = isSpin || isTurnLeft || isTurnRight
     const walkMode = isRotate ? "rotating" : "walking"
     const isBackward = actionId === "walk_backward" || (customGaitParams && customGaitParams.vx < 0)
@@ -83,50 +90,54 @@ export async function generateLocomotionFrames(
     const walkSeq = getWalkSequence(dimensions, gaitParams, "tripod", walkMode)
     if (!walkSeq) return [{ pose: startPose, twist: initialHeading }, { pose: DEFAULT_POSE, twist: initialHeading }]
 
-    const loops = Math.max(1, Math.round(durationMs / 1000))
-    const rawPoses = expandGaitSequence(walkSeq, 3, loops)
+    // Scale cycle counts to fill exact duration at 60 FPS (approx 1 cycle = 0.8s = 48 frames)
+    const cycleTimeS = customGaitParams?.cycle_time || 0.8
+    const totalCycles = Math.max(1, Math.round(durationMs / (cycleTimeS * 1000)))
+    const stepsPerPose = Math.max(2, Math.round((cycleTimeS * 60) / 10))
+    const rawPoses = expandGaitSequence(walkSeq, stepsPerPose, totalCycles)
 
-    if (isBackward || isTurnRight) {
+    if (isBackward || (isRotate && isTurnRight && !isSpin)) {
         rawPoses.reverse()
     }
 
-    let deltaTwist = 0
-    if (isSpin) deltaTwist = 360
-    else if (isTurnLeft) deltaTwist = 90
-    else if (isTurnRight) deltaTwist = -90
+    const turnRateDegPerSec = (customGaitParams?.omega) ? Math.abs(customGaitParams.omega) : (isSpin ? 50 : 30)
+    const totalRotationDeg = (turnRateDegPerSec * (durationMs / 1000.0)) * (isTurnLeft ? -1 : 1)
 
     const totalSteps = rawPoses.length
     const frames = []
     const baseHeading = initialHeading || 0
 
-    const leadInSteps = 4
+    // Lead-in smooth ramp from current pose
+    const leadInSteps = 6
     for (let i = 0; i <= leadInSteps; i++) {
         const t = i / leadInSteps
         const ease = quinticEase(t)
         frames.push({
             pose: blendTwoPoses(startPose, rawPoses[0], ease),
-            twist: baseHeading
+            twist: baseHeading,
         })
     }
 
+    // Steady-state continuous locomotion
     for (let i = 0; i < totalSteps; i++) {
         const progress = totalSteps > 1 ? i / (totalSteps - 1) : 0
-        const currentTwist = isRotate ? baseHeading + deltaTwist * progress : baseHeading
+        const currentTwist = isRotate ? (baseHeading + totalRotationDeg * progress) : baseHeading
         frames.push({
             pose: rawPoses[i],
-            twist: currentTwist
+            twist: currentTwist,
         })
     }
 
-    const finalHeading = isRotate ? baseHeading + deltaTwist : baseHeading
-    const leadOutSteps = 4
+    // Lead-out holding final heading
+    const finalHeading = isRotate ? (baseHeading + totalRotationDeg) : baseHeading
     const lastPose = rawPoses[rawPoses.length - 1] || DEFAULT_POSE
+    const leadOutSteps = 6
     for (let i = 1; i <= leadOutSteps; i++) {
         const t = i / leadOutSteps
         const ease = quinticEase(t)
         frames.push({
             pose: blendTwoPoses(lastPose, DEFAULT_POSE, ease),
-            twist: finalHeading
+            twist: finalHeading,
         })
     }
 

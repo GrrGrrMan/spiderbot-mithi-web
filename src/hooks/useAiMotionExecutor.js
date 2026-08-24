@@ -83,12 +83,16 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
                 publishImmediate("hexapod/cmd", motionPayload)
             }
 
-            generateParametricPoseFramesAsync(motionPayload, dims, startPose, 15).then(frames => {
+            generateParametricPoseFramesAsync(motionPayload, dims, startPose, 20).then(frames => {
                 if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
-                    const wrappedFrames = frames.map(f => ({
-                        pose: f.pose || f,
-                        twist: initialHeading,
-                    }))
+                    const wrappedFrames = frames.map(f => {
+                        const base = f.pose || f
+                        const yawAngle = motionPayload.yaw !== undefined ? motionPayload.yaw : (motionPayload.rz || 0)
+                        return {
+                            pose: base,
+                            twist: initialHeading + yawAngle,
+                        }
+                    })
                     setActiveFrames(wrappedFrames)
                 }
             })

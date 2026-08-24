@@ -159,23 +159,8 @@ function MainLayout() {
         sentinel.handleSentinelEvent(lastMsg)
     }, [aiMessages, sentinel])
 
-    useEffect(() => {
-        if (!aiMessages || !aiMessages.length) return
-        const last = aiMessages[aiMessages.length - 1]
-        if (!last) return
+    // Directive routing is handled exclusively by useAiChat to prevent duplicate execution races
 
-        const isActionMsg = last.type === "directive" || last.action_id || last.action || last.joint_params || last.type === "sequence" || last.type === "motion"
-        if (!isActionMsg) return
-
-        const key = `${aiMessages.length}|${last.role}|${last.type}|${last.action_id || last.action || last.name || (last.payload && last.payload.name) || ""}`
-        if (lastDirectiveKeyRef.current === key) return
-        lastDirectiveKeyRef.current = key
-
-        const a = resolveAction(last, aiChat.ACTIONS)
-        if (a && a.id !== "stop") {
-            triggerAction(a, last.joint_params, { skipPublish: true })
-        }
-    }, [aiMessages, triggerAction, aiChat.ACTIONS])
 
     // Hardware Watchdog Sync: Instantly stop UI animations if firmware applies emergency brakes
     useEffect(() => {
