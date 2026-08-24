@@ -16,12 +16,8 @@ const HEAD_SIZE = 14
 const LEG_OUTLINE_WIDTH = 10
 const SUPPORT_POLYGON_MESH_OPACITY = 0.2
 
-// --- Phase 3 Ghost Silhouette Variables ---
-const GHOST_COLOR = "rgba(50, 255, 126, 0.4)" // Glowing translucent green
-const GHOST_LINE_WIDTH = 6
-// ------------------------------------------
-
 const DATA_INDEX_MAP = {
+
     bodyMesh: 0,
     bodyOutline: 1,
     head: 2,
@@ -40,14 +36,6 @@ const DATA_INDEX_MAP = {
     worldXaxis: 15,
     worldYaxis: 16,
     worldZaxis: 17,
-    // --- Phase 3 Ghost Silhouette Indices ---
-    bodyOutlineGhost: 18,
-    rightMiddleLegGhost: 19,
-    rightFrontLegGhost: 20,
-    leftFrontLegGhost: 21,
-    leftMiddleLegGhost: 22,
-    leftBackLegGhost: 23,
-    rightBackLegGhost: 24,
 }
 
 // prettier-ignore
@@ -241,15 +229,7 @@ const DATA = [
         x: [0, 0],
         y: [0, 0],
         z: [0, 50],
-    },
-    // --- Phase 3 Ghost Silhouette Traces ---
-    { line: { color: GHOST_COLOR, width: GHOST_LINE_WIDTH, dash: "dot" }, name: "bodyOutlineGhost", showlegend: false, type: "scatter3d", hoverinfo: 'skip', x: [], y: [], z: [] },
-    { line: { color: GHOST_COLOR, width: GHOST_LINE_WIDTH, dash: "dot" }, name: "rightMiddleLegGhost", showlegend: false, type: "scatter3d", hoverinfo: 'skip', x: [], y: [], z: [] },
-    { line: { color: GHOST_COLOR, width: GHOST_LINE_WIDTH, dash: "dot" }, name: "rightFrontLegGhost", showlegend: false, type: "scatter3d", hoverinfo: 'skip', x: [], y: [], z: [] },
-    { line: { color: GHOST_COLOR, width: GHOST_LINE_WIDTH, dash: "dot" }, name: "leftFrontLegGhost", showlegend: false, type: "scatter3d", hoverinfo: 'skip', x: [], y: [], z: [] },
-    { line: { color: GHOST_COLOR, width: GHOST_LINE_WIDTH, dash: "dot" }, name: "leftMiddleLegGhost", showlegend: false, type: "scatter3d", hoverinfo: 'skip', x: [], y: [], z: [] },
-    { line: { color: GHOST_COLOR, width: GHOST_LINE_WIDTH, dash: "dot" }, name: "leftBackLegGhost", showlegend: false, type: "scatter3d", hoverinfo: 'skip', x: [], y: [], z: [] },
-    { line: { color: GHOST_COLOR, width: GHOST_LINE_WIDTH, dash: "dot" }, name: "rightBackLegGhost", showlegend: false, type: "scatter3d", hoverinfo: 'skip', x: [], y: [], z: [] }
+    }
 ]
 
 const CAMERA_VIEW = {

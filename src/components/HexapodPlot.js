@@ -2,7 +2,7 @@
 import React from "react"
 import createPlotlyComponent from "react-plotly.js/factory"
 import * as defaults from "../templates"
-import getNewPlotParams, { getTargetTraceUpdates, getGhostTraceUpdates } from "../templates/plotter"
+import getNewPlotParams, { getTargetTraceUpdates } from "../templates/plotter"
 import VirtualHexapod from "../hexapod/VirtualHexapod"
 import { tRotZmatrix } from "../hexapod/geometry"
 
@@ -13,12 +13,7 @@ class HexapodPlot extends React.Component {
     Plotly = null
     graphDiv = null
     containerRef = null
-    latestGhostPose = null
     isPlotDragging = false
-    
-    // Add guards for telemetry background execution
-    pendingTelemetryPose = null
-    telemetryRafId = null
 
     shouldComponentUpdate(nextProps, nextState) {
         return (
@@ -40,7 +35,6 @@ class HexapodPlot extends React.Component {
         })
         
         window.addEventListener("hexapod-anim-frame", this.handleAnimFrame)
-        window.addEventListener("hexapod-telemetry-frame", this.handleTelemetryFrame)
 
         window.addEventListener("pointerdown", this.handleGlobalPointerDown, true)
         window.addEventListener("pointerup", this.handleGlobalPointerUp, true)
@@ -49,14 +43,13 @@ class HexapodPlot extends React.Component {
 
     componentWillUnmount() {
         window.removeEventListener("hexapod-anim-frame", this.handleAnimFrame)
-        window.removeEventListener("hexapod-telemetry-frame", this.handleTelemetryFrame)
 
         window.removeEventListener("pointerdown", this.handleGlobalPointerDown, true)
         window.removeEventListener("pointerup", this.handleGlobalPointerUp, true)
         window.removeEventListener("pointercancel", this.handleGlobalPointerUp, true)
         
-        if (this.telemetryRafId) {
-            cancelAnimationFrame(this.telemetryRafId)
+        if (this.renderRafId) {
+            cancelAnimationFrame(this.renderRafId)
         }
     }
 
@@ -94,79 +87,53 @@ class HexapodPlot extends React.Component {
         }
     }
 
-    handleAnimFrame = (e) => {
-        if (!this.Plotly || !this.Plotly.restyle || !this.graphDiv || !this.props.hexapod) return
-        
-        const detail = e.detail
-        if (!detail) return
-
-        const pose = detail.pose || detail
-        if (!pose || typeof pose !== "object") return
-        const dimensions = this.props.hexapod.dimensions
-        if (!dimensions) return
-
-        try {
-            let animHexapod = new VirtualHexapod(dimensions, pose, { wontRotate: true })
-            if (!animHexapod || !animHexapod.body || !animHexapod.foundSolution) return
-            
-            if (typeof detail.twist === "number" && detail.twist !== 0) {
-                const matrix = tRotZmatrix(detail.twist)
-                animHexapod = animHexapod.cloneTrot(matrix)
-            } else if (detail.matrix) {
-                animHexapod = animHexapod.cloneTrot(detail.matrix)
-            }
-
-            const { update, indices } = getTargetTraceUpdates(animHexapod)
-            this.Plotly.restyle(this.graphDiv, update, indices)
-        } catch (err) {
-            console.warn("[HexapodPlot] Error applying anim frame:", err)
+    schedulePlotUpdate = () => {
+        if (!this.renderRafId) {
+            this.renderRafId = requestAnimationFrame(this.executePlotUpdate)
         }
     }
 
-    handleTelemetryFrame = (e) => {
-        if (!this.Plotly || !this.Plotly.restyle || !this.graphDiv || !this.props.hexapod) return
+    executePlotUpdate = () => {
+        this.renderRafId = null
+        if (!this.Plotly || !this.Plotly.restyle || !this.graphDiv || !this.props.hexapod || !this.pendingAnimPose) return
 
-        this.pendingTelemetryPose = e.detail
-        
-        // Guard against invisible WebGL enqueueing crashing the browser out-of-tab
-        if (!this.telemetryRafId) {
-            this.telemetryRafId = requestAnimationFrame(() => {
-                this.telemetryRafId = null
-                
-                const pose = this.pendingTelemetryPose
-                if (!pose || typeof pose !== "object") return
-                
-                this.latestGhostPose = pose
-                const dimensions = this.props.hexapod.dimensions
-                if (!dimensions) return
+        const dimensions = this.props.hexapod.dimensions
+        if (!dimensions) return
 
-                try {
-                    const ghostHexapod = new VirtualHexapod(dimensions, pose, { wontRotate: true })
-                    if (!ghostHexapod || !ghostHexapod.body || !ghostHexapod.foundSolution) return
+        const detail = this.pendingAnimPose
+        this.pendingAnimPose = null
+        const pose = detail.pose || detail
 
-                    const { update, indices } = getGhostTraceUpdates(ghostHexapod)
+        if (pose && typeof pose === "object") {
+            try {
+                let animHexapod = new VirtualHexapod(dimensions, pose, { wontRotate: true, assumeKnownGroundPoints: true })
+                if (animHexapod && animHexapod.body && animHexapod.foundSolution) {
+                    if (typeof detail.twist === "number" && detail.twist !== 0) {
+                        animHexapod = animHexapod.cloneTrot(tRotZmatrix(detail.twist))
+                    } else if (detail.matrix) {
+                        animHexapod = animHexapod.cloneTrot(detail.matrix)
+                    }
+                    const { update, indices } = getTargetTraceUpdates(animHexapod)
                     this.Plotly.restyle(this.graphDiv, update, indices)
-                } catch (err) {
-                    console.warn("[HexapodPlot] Error applying telemetry frame:", err)
                 }
-            })
+            } catch (err) {
+                console.warn("[HexapodPlot] Error applying anim frame:", err)
+            }
         }
+    }
+
+    handleAnimFrame = (e) => {
+        if (!e.detail) return
+        this.pendingAnimPose = e.detail
+        this.schedulePlotUpdate()
     }
 
     render() {
         if (!this.state.ready) return <p>Loading your cute robot...</p>
         if (!this.props.hexapod) return null
 
-        let ghostHexapod = null
-        if (this.latestGhostPose) {
-            try {
-                ghostHexapod = new VirtualHexapod(this.props.hexapod.dimensions, this.latestGhostPose, { wontRotate: true })
-            } catch (e) {
-                ghostHexapod = null
-            }
-        }
+        const [data, layout] = getNewPlotParams(this.props.hexapod, this.cameraView)
 
-        const [data, layout] = getNewPlotParams(this.props.hexapod, this.cameraView, ghostHexapod)
 
         const props = {
             data,

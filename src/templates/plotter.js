@@ -73,46 +73,8 @@ export const getTargetTraceUpdates = (hexapod) => {
     return { update: { x, y, z }, indices }
 }
 
-// Fast-path: Extracts arrays for traces 18..24 (Ghost Silhouette) for Plotly.restyle
-export const getGhostTraceUpdates = (ghostHexapod) => {
-    const indices = [18, 19, 20, 21, 22, 23, 24]
-    if (!ghostHexapod) {
-        const empty = [[], [], [], [], [], [], []]
-        return { update: { x: empty, y: empty, z: empty }, indices }
-    }
+const _drawHexapod = (hexapod) => {
 
-    const ghostVerts = ghostHexapod.body.closedPointsList
-    const x = [
-        ghostVerts.map(p => p.x),
-        ghostHexapod.legs[0].allPointsList.map(p => p.x),
-        ghostHexapod.legs[1].allPointsList.map(p => p.x),
-        ghostHexapod.legs[2].allPointsList.map(p => p.x),
-        ghostHexapod.legs[3].allPointsList.map(p => p.x),
-        ghostHexapod.legs[4].allPointsList.map(p => p.x),
-        ghostHexapod.legs[5].allPointsList.map(p => p.x),
-    ]
-    const y = [
-        ghostVerts.map(p => p.y),
-        ghostHexapod.legs[0].allPointsList.map(p => p.y),
-        ghostHexapod.legs[1].allPointsList.map(p => p.y),
-        ghostHexapod.legs[2].allPointsList.map(p => p.y),
-        ghostHexapod.legs[3].allPointsList.map(p => p.y),
-        ghostHexapod.legs[4].allPointsList.map(p => p.y),
-        ghostHexapod.legs[5].allPointsList.map(p => p.y),
-    ]
-    const z = [
-        ghostVerts.map(p => p.z),
-        ghostHexapod.legs[0].allPointsList.map(p => p.z),
-        ghostHexapod.legs[1].allPointsList.map(p => p.z),
-        ghostHexapod.legs[2].allPointsList.map(p => p.z),
-        ghostHexapod.legs[3].allPointsList.map(p => p.z),
-        ghostHexapod.legs[4].allPointsList.map(p => p.z),
-        ghostHexapod.legs[5].allPointsList.map(p => p.z),
-    ]
-    return { update: { x, y, z }, indices }
-}
-
-const _drawHexapod = (hexapod, ghostHexapod) => {
     // 1. SOLID HEXAPOD (Target)
     const polygonVertices = hexapod.body.closedPointsList
     const bodyX = polygonVertices.map(point => point.x)
@@ -150,37 +112,15 @@ const _drawHexapod = (hexapod, ghostHexapod) => {
     const wYaxis = { ...DATA[DATA_INDEX_MAP.worldYaxis], y: [0, axisScale] }
     const wZaxis = { ...DATA[DATA_INDEX_MAP.worldZaxis], z: [0, axisScale] }
 
-    // 2. GHOST HEXAPOD (Physical Telemetry Ground-Truth)
-    const ghostTraces = []
-    if (ghostHexapod) {
-        const ghostVerts = ghostHexapod.body.closedPointsList
-        ghostTraces.push({
-            ...DATA[DATA_INDEX_MAP.bodyOutlineGhost],
-            x: ghostVerts.map(p => p.x), y: ghostVerts.map(p => p.y), z: ghostVerts.map(p => p.z)
-        })
-        ghostHexapod.legs.forEach(leg => {
-            ghostTraces.push({
-                ...DATA[DATA_INDEX_MAP[`${leg.name}Ghost`]],
-                x: leg.allPointsList.map(p => p.x),
-                y: leg.allPointsList.map(p => p.y),
-                z: leg.allPointsList.map(p => p.z),
-            })
-        })
-    } else {
-        ghostTraces.push({ ...DATA[DATA_INDEX_MAP.bodyOutlineGhost], x: [], y: [], z: [] })
-        legs.forEach(leg => ghostTraces.push({ ...DATA[DATA_INDEX_MAP[`${leg.name}Ghost`]], x: [], y: [], z: [] }))
-    }
-
     return [
         dBodyMesh, dBodyOutline, dHead, dCog, dCogProjection,
         ...dLegs, dSupportPolygon,
-        hXaxis, hYaxis, hZaxis, wXaxis, wYaxis, wZaxis,
-        ...ghostTraces
+        hXaxis, hYaxis, hZaxis, wXaxis, wYaxis, wZaxis
     ]
 }
 
-const getNewPlotParams = (hexapod, cameraView, ghostHexapod = null) => {
-    const data = _drawHexapod(hexapod, ghostHexapod)
+const getNewPlotParams = (hexapod, cameraView) => {
+    const data = _drawHexapod(hexapod)
     if ([null, undefined, {}].includes(cameraView)) cameraView = CAMERA_VIEW
     
     const range = _getSumOfDimensions(hexapod.dimensions)

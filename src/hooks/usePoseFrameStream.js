@@ -34,12 +34,13 @@ export const usePoseFrameStream = (
             return undefined
         }
 
-        let startTime = performance.now()
+        let startTime = null
         let lastPublish = 0
         const frameDuration = 1000 / fps
         const publishInterval = 1000 / publishHz
 
         const tick = (now) => {
+            if (startTime === null) startTime = now
             const currentList = framesRef.current
             if (!currentList || !Array.isArray(currentList) || currentList.length === 0) {
                 stop()

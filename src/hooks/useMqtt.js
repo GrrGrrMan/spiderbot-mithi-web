@@ -103,12 +103,6 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
                             })
                         }
                         
-                        // Non-state-based Plotly traces are still dispatched at full telemetry frequency
-                        if (parsed.pose && typeof window !== "undefined") {
-                            window.dispatchEvent(
-                                new CustomEvent("hexapod-telemetry-frame", { detail: parsed.pose })
-                            )
-                        }
                     }
                 } catch (e) {
                     console.error("[MQTT WebUI] Telemetry JSON parse error:", e)

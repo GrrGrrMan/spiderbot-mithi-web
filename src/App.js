@@ -180,7 +180,7 @@ function MainLayout() {
         manageState("pose", { pose: DEFAULT_POSE })
     }, [manageState])
 
-    const robotContextValue = {
+    const robotContextValue = React.useMemo(() => ({
         onMount: onPageLoad,
         onUpdate: manageState,
         publishThrottled,
@@ -215,9 +215,15 @@ function MainLayout() {
         logs,
         clearLogs,
         telemetry,
-    }
+    }), [
+        onPageLoad, manageState, publishThrottled, publishImmediate, publishAi,
+        publishAiConfig, publishAiMemory, publishAudio, aiMessages, clearAiMessages,
+        aiStatus, audioStatus, memoryState, isConnected, deviceId, camConfig, camTelemetry,
+        hexapod, revision, activeExecutingAction, triggerAction, stopAll, aiChat, smartSpeaker,
+        sentinel, sentinelLog, logs, telemetry
+    ])
 
-    const pageComponent = Component => <Component {...robotContextValue} />
+    const pageComponent = useCallback(Component => <Component {...robotContextValue} />, [robotContextValue])
 
     return (
         <RobotProvider value={robotContextValue}>
