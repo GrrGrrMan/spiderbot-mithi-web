@@ -18,10 +18,12 @@ export async function generateDynamicSequenceFramesAsync(keyframes, dimensions, 
     }
 
     const convertedPoses = [startPose]
+    const transitionStepsList = []
 
     for (let i = 0; i < keyframes.length; i++) {
         const kf = keyframes[i]
-        let framePose = JSON.parse(JSON.stringify(DEFAULT_POSE))
+        const lastPose = convertedPoses[convertedPoses.length - 1] || DEFAULT_POSE
+        let framePose = JSON.parse(JSON.stringify(lastPose))
 
         // Body Cartesian IK Keyframe
         if (kf.tx !== undefined || kf.ty !== undefined || kf.tz !== undefined || kf.rx !== undefined || kf.ry !== undefined || kf.rz !== undefined) {
@@ -32,16 +34,13 @@ export async function generateDynamicSequenceFramesAsync(keyframes, dimensions, 
                 rx: -(kf.rx || 0),
                 ry: -(kf.ry || 0),
                 rz: -(kf.rz || 0),
-                hipStance: 20,
-                legStance: 0,
+                hipStance: kf.hipStance !== undefined ? kf.hipStance : 20,
+                legStance: kf.legStance !== undefined ? kf.legStance : 0,
             })
         }
 
         // Joint Overrides
         if (kf.joints && typeof kf.joints === "object") {
-            const lastPose = convertedPoses[convertedPoses.length - 1] || DEFAULT_POSE
-            framePose = JSON.parse(JSON.stringify(lastPose))
-            
             Object.entries(kf.joints).forEach(([shortKey, angles]) => {
                 const fullLegName = LEG_KEYS[shortKey] || shortKey
                 if (framePose[fullLegName]) {
@@ -55,7 +54,9 @@ export async function generateDynamicSequenceFramesAsync(keyframes, dimensions, 
         }
 
         convertedPoses.push(framePose)
+        const dur = kf.duration_ms || 400
+        transitionStepsList.push(Math.max(2, Math.round((dur / 1000) * 60)))
     }
 
-    return await buildSequenceFromKeyframesAsync(convertedPoses, 15)
+    return await buildSequenceFromKeyframesAsync(convertedPoses, transitionStepsList)
 }

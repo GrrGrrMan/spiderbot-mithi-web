@@ -7,15 +7,17 @@ const PUBLISH_HZ = 10
 export const usePoseFrameStream = (
     frames = [],
     onPublish = () => {},
-    { fps = FPS, publishHz = PUBLISH_HZ, enabled = true, onComplete = () => {} } = {}
+    { fps = FPS, publishHz = PUBLISH_HZ, enabled = true, onFrame = () => {}, onComplete = () => {} } = {}
 ) => {
     const reqRef = useRef(null)
     const framesRef = useRef(frames)
     const onPublishRef = useRef(onPublish)
+    const onFrameRef = useRef(onFrame)
     const onCompleteRef = useRef(onComplete)
 
     framesRef.current = frames
     onPublishRef.current = onPublish
+    onFrameRef.current = onFrame
     onCompleteRef.current = onComplete
 
     const stop = useCallback(() => {
@@ -68,6 +70,7 @@ export const usePoseFrameStream = (
                 if (currentFrame && typeof currentFrame === "object") {
                     // 2. High-Speed Visual Update @ 60FPS (carries { pose, twist } to Plotly)
                     window.dispatchEvent(new CustomEvent('hexapod-anim-frame', { detail: currentFrame }))
+                    if (onFrameRef.current) onFrameRef.current(currentFrame)
 
                     // 3. Throttled Physical Publish @ 10Hz (extracts plain pose for MQTT)
                     if (now - lastPublish >= publishInterval) {

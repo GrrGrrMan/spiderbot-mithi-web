@@ -32,10 +32,14 @@ export function getWorker() {
             }
             function buildSequenceFromKeyframes(keyframes, stepsPerTransition) {
                 if (!keyframes || keyframes.length === 0) return [];
-                if (keyframes.length === 1) return interpolatePoses(null, keyframes[0], stepsPerTransition);
+                if (keyframes.length === 1) {
+                    const steps = Array.isArray(stepsPerTransition) ? (stepsPerTransition[0] || 10) : stepsPerTransition;
+                    return interpolatePoses(null, keyframes[0], steps);
+                }
                 let fullSequence = [];
                 for (let i = 0; i < keyframes.length - 1; i++) {
-                    const seg = interpolatePoses(keyframes[i], keyframes[i + 1], stepsPerTransition);
+                    const steps = Array.isArray(stepsPerTransition) ? (stepsPerTransition[i] || 10) : stepsPerTransition;
+                    const seg = interpolatePoses(keyframes[i], keyframes[i + 1], steps);
                     if (i > 0) seg.shift();
                     fullSequence = fullSequence.concat(seg);
                 }

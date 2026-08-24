@@ -35,11 +35,15 @@ export function interpolatePoses(startPose, targetPose, steps = 10) {
 
 export function buildSequenceFromKeyframes(keyframes, stepsPerTransition = 10) {
     if (!keyframes || keyframes.length === 0) return [DEFAULT_POSE]
-    if (keyframes.length === 1) return interpolatePoses(DEFAULT_POSE, keyframes[0], stepsPerTransition)
+    if (keyframes.length === 1) {
+        const steps = Array.isArray(stepsPerTransition) ? (stepsPerTransition[0] || 10) : stepsPerTransition
+        return interpolatePoses(DEFAULT_POSE, keyframes[0], steps)
+    }
 
     let fullSequence = []
     for (let i = 0; i < keyframes.length - 1; i++) {
-        const seg = interpolatePoses(keyframes[i], keyframes[i + 1], stepsPerTransition)
+        const steps = Array.isArray(stepsPerTransition) ? (stepsPerTransition[i] || 10) : stepsPerTransition
+        const seg = interpolatePoses(keyframes[i], keyframes[i + 1], steps)
         if (i > 0) seg.shift()
         fullSequence = fullSequence.concat(seg)
     }

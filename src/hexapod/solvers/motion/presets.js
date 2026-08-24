@@ -18,29 +18,30 @@ export function getIkPose(dimensions, ikParams) {
 export function generatePresetKeyframes(presetName, dimensions, cycles = 3, startPose = DEFAULT_POSE) {
     const keyframes = []
     const count = Math.max(1, Math.min(cycles || 3, 10))
+    const base = JSON.parse(JSON.stringify(startPose || DEFAULT_POSE))
 
     if (presetName === "wave" || presetName === "waveLeg" || presetName === "sayHi" || presetName === "preset_wave") {
-        const waveLift = JSON.parse(JSON.stringify(DEFAULT_POSE))
+        const waveLift = JSON.parse(JSON.stringify(base))
         waveLift.rightFront = { alpha: 25, beta: 65, gamma: -60 }
 
-        const waveLeft = JSON.parse(JSON.stringify(DEFAULT_POSE))
+        const waveLeft = JSON.parse(JSON.stringify(base))
         waveLeft.rightFront = { alpha: -25, beta: 65, gamma: -60 }
 
-        const waveRight = JSON.parse(JSON.stringify(DEFAULT_POSE))
+        const waveRight = JSON.parse(JSON.stringify(base))
         waveRight.rightFront = { alpha: 35, beta: 65, gamma: -60 }
 
         keyframes.push(startPose, waveLift)
         for (let c = 0; c < count; c++) {
             keyframes.push(waveLeft, waveRight)
         }
-        keyframes.push(waveLift, DEFAULT_POSE)
+        keyframes.push(waveLift, base)
 
     } else if (presetName === "doubleWave" || presetName === "cheer" || presetName === "preset_cheer") {
-        const cheerUp1 = JSON.parse(JSON.stringify(DEFAULT_POSE))
+        const cheerUp1 = JSON.parse(JSON.stringify(base))
         cheerUp1.leftFront = { alpha: -20, beta: 60, gamma: -50 }
         cheerUp1.rightFront = { alpha: 20, beta: 60, gamma: -50 }
 
-        const cheerUp2 = JSON.parse(JSON.stringify(DEFAULT_POSE))
+        const cheerUp2 = JSON.parse(JSON.stringify(base))
         cheerUp2.leftFront = { alpha: -35, beta: 75, gamma: -70 }
         cheerUp2.rightFront = { alpha: 35, beta: 75, gamma: -70 }
 
@@ -48,7 +49,7 @@ export function generatePresetKeyframes(presetName, dimensions, cycles = 3, star
         for (let c = 0; c < count; c++) {
             keyframes.push(cheerUp1, cheerUp2)
         }
-        keyframes.push(DEFAULT_POSE)
+        keyframes.push(base)
 
     } else if (presetName === "standUp" || presetName === "preset_stand") {
         keyframes.push(startPose, getIkPose(dimensions, { tx: 0, ty: 0, tz: 0.35, rx: 0, ry: 0, rz: 0, hipStance: 25, legStance: 10 }))

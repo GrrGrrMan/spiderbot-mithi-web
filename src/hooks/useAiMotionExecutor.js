@@ -17,11 +17,19 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
     const [activeExecutingAction, setActiveExecutingAction] = useState(null)
     const activeReqIdRef = useRef(0)
     const currentHeadingRef = useRef(0)
+    const currentPoseRef = useRef(DEFAULT_POSE)
     const motionTimerRef = useRef(null)
     const motionIntervalRef = useRef(null)
 
     const paramsRef = useRef(params)
     paramsRef.current = params
+
+    // Sync live pose reference on initial state update
+    useEffect(() => {
+        if (!activeExecutingAction && params.pose) {
+            currentPoseRef.current = params.pose
+        }
+    }, [params.pose, activeExecutingAction])
 
     const stopLocomotionTimer = useCallback(() => {
         if (motionTimerRef.current) {
@@ -34,21 +42,30 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
         }
     }, [])
 
-    // Cleanup pending timer when component unmounts
     useEffect(() => {
         return stopLocomotionTimer
     }, [stopLocomotionTimer])
 
-    // Local 60 FPS Visualizer (Zero MQTT Pose Spamming)
+    // Local 60 FPS Visualizer with live pose & heading tracking
     const { stop: stopStream } = usePoseFrameStream(
         activeFrames,
         () => {}, 
         {
+            onFrame: currentFrame => {
+                if (currentFrame && typeof currentFrame === "object") {
+                    if (currentFrame.pose) currentPoseRef.current = currentFrame.pose
+                    else currentPoseRef.current = currentFrame
+                    if (typeof currentFrame.twist === "number") {
+                        currentHeadingRef.current = currentFrame.twist
+                    }
+                }
+            },
             onComplete: finalFrame => {
                 if (finalFrame && typeof finalFrame === "object") {
                     const finalPose = finalFrame.pose || finalFrame
                     const twist = typeof finalFrame.twist === "number" ? finalFrame.twist : (currentHeadingRef.current || 0)
                     currentHeadingRef.current = twist
+                    currentPoseRef.current = finalPose
                     const dims = paramsRef.current?.dimensions || DEFAULT_DIMENSIONS
 
                     if (twist !== 0) {
@@ -76,23 +93,20 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
             setActiveExecutingAction(actionName)
             const reqId = ++activeReqIdRef.current
             const dims = paramsRef.current?.dimensions || DEFAULT_DIMENSIONS
-            const startPose = paramsRef.current?.pose || DEFAULT_POSE
+            const startPose = currentPoseRef.current || paramsRef.current?.pose || DEFAULT_POSE
             const initialHeading = currentHeadingRef.current || 0
+            const durationMs = motionPayload.duration_ms || 2500
 
             if (!skipPublish) {
                 publishImmediate("hexapod/cmd", motionPayload)
             }
 
-            generateParametricPoseFramesAsync(motionPayload, dims, startPose, 20).then(frames => {
+            generateParametricPoseFramesAsync(motionPayload, dims, startPose, 20, durationMs).then(frames => {
                 if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
-                    const wrappedFrames = frames.map(f => {
-                        const base = f.pose || f
-                        const yawAngle = motionPayload.yaw !== undefined ? motionPayload.yaw : (motionPayload.rz || 0)
-                        return {
-                            pose: base,
-                            twist: initialHeading + yawAngle,
-                        }
-                    })
+                    const wrappedFrames = frames.map(f => ({
+                        pose: f.pose || f,
+                        twist: initialHeading,
+                    }))
                     setActiveFrames(wrappedFrames)
                 }
             })
@@ -109,7 +123,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
             setActiveExecutingAction(name)
             const reqId = ++activeReqIdRef.current
             const dims = paramsRef.current?.dimensions || DEFAULT_DIMENSIONS
-            const startPose = paramsRef.current?.pose || DEFAULT_POSE
+            const startPose = currentPoseRef.current || paramsRef.current?.pose || DEFAULT_POSE
             const initialHeading = currentHeadingRef.current || 0
 
             if (!skipPublish) {
@@ -127,7 +141,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
                     }
                 })
             } else {
-                generatePresetFramesAsync(actionPayload.preset || name, dims, 3, startPose, 30).then(frames => {
+                generatePresetFramesAsync(actionPayload.preset || name, dims, 3, startPose, 20).then(frames => {
                     if (reqId === activeReqIdRef.current && Array.isArray(frames) && frames.length > 0) {
                         const wrappedFrames = frames.map(f => ({
                             pose: f.pose || f,
@@ -147,7 +161,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
             setActiveExecutingAction(actionId)
             const reqId = ++activeReqIdRef.current
             const dims = paramsRef.current?.dimensions || DEFAULT_DIMENSIONS
-            const startPose = paramsRef.current?.pose || DEFAULT_POSE
+            const startPose = currentPoseRef.current || paramsRef.current?.pose || DEFAULT_POSE
             const initialHeading = currentHeadingRef.current || 0
 
             generateLocomotionFrames(actionId, dims, durationMs, startPose, customGaitParams, initialHeading).then(frames => {
@@ -247,7 +261,20 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
         setActiveExecutingAction(null)
         setActiveFrames([])
         publishImmediate("hexapod/cmd", { type: "motion", vx: 0, vy: 0, omega: 0 })
-        onUpdate("pose", { pose: DEFAULT_POSE })
+        currentPoseRef.current = DEFAULT_POSE
+        const twist = currentHeadingRef.current || 0
+        if (twist !== 0) {
+            try {
+                const dims = paramsRef.current?.dimensions || DEFAULT_DIMENSIONS
+                const hex = new VirtualHexapod(dims, DEFAULT_POSE, { wontRotate: true })
+                const matrix = tRotZmatrix(twist)
+                onUpdate("hexapod", { hexapod: hex.cloneTrot(matrix) }, { fromStream: true })
+            } catch (e) {
+                onUpdate("pose", { pose: DEFAULT_POSE })
+            }
+        } else {
+            onUpdate("pose", { pose: DEFAULT_POSE })
+        }
     }, [stopStream, publishImmediate, onUpdate, stopLocomotionTimer])
 
     return { activeExecutingAction, triggerAction, stopAll }
