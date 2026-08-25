@@ -1,7 +1,7 @@
 // web-ui/src/components/vars.js
 import React from "react"
 import { GiCoffeeMug } from "react-icons/gi"
-import { FaGithubAlt, FaTimes, FaHome, FaCamera, FaMicrochip, FaVolumeUp, FaRobot, FaBalanceScale } from "react-icons/fa"
+import { FaGithubAlt, FaTimes, FaHome, FaCamera, FaMicrochip, FaVolumeUp, FaRobot } from "react-icons/fa"
 import { GrStatusGoodSmall } from "react-icons/gr"
 
 const SECTION_NAMES = {

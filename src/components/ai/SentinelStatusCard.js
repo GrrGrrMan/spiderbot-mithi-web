@@ -73,7 +73,7 @@ const getContentText = (state, isListening, micError, lastTranscript, lastAccept
     if (state === "listening_prompt") return "Heard wake-word — awaiting directive..."
     if (state === "ignored" && lastTranscript) return `Dropped "${lastTranscript}"`
     if (lastTranscript) return `"${lastTranscript}"`
-    return 'Listening for "Hey Spider..."'
+    return 'Listening for "Hey Hexa..."'
 }
 
 const getBadgeConfig = (state, isListening, micError) => {

@@ -1,6 +1,6 @@
 // web-ui/src/App.js
 import React, { useState, useEffect, useCallback, useRef } from "react"
-import { BrowserRouter as Router, useLocation } from "react-router-dom"
+import { BrowserRouter as Router } from "react-router-dom"
 import { DEFAULT_POSE } from "./templates"
 import { SECTION_NAMES } from "./components/vars"
 import { Nav, NavDetailed, DimensionsWidget } from "./components"
@@ -14,19 +14,14 @@ import CameraView from "./components/camera/CameraView"
 import DualStageViewport from "./components/camera/DualStageViewport"
 import AiChatOverlay from "./components/ai/AiChatOverlay"
 import { useContinuousWakeWord } from "./hooks/useContinuousWakeWord"
-import { matchAction } from "./utils/aiActionMatcher"
-import { resolveAction } from "./utils/aiActionResolver"
 import { RobotProvider } from "./context/RobotContext"
 
 
 function MainLayout() {
-    const location = useLocation()
-
     const [inHexapodPage, setInHexapodPage] = useState(false)
     const [smartSpeaker, setSmartSpeaker] = useState(false)
     const [sentinelLog, setSentinelLog] = useState([])
     const lastProcessedMsgRef = useRef(null)
-    const lastDirectiveKeyRef = useRef(null)
     const [hexapod, setHexapod] = useState(() => updateHexapod("default"))
     const [revision, setRevision] = useState(0)
     const [isAiOverlayOpen, setIsAiOverlayOpen] = useState(false)
@@ -64,7 +59,8 @@ function MainLayout() {
 
     const manageState = useCallback((updateType, newParam, options = {}) => {
         // If human manually tweaks a slider/joint, preempt automated AI animations
-        if (!options?.fromStream && activeExecutingActionRef.current && stopAllRef.current) {
+        if (!options?.fromStream && !options?.fromExecutor && activeExecutingActionRef.current && stopAllRef.current) {
+            activeExecutingActionRef.current = null
             stopAllRef.current()
         }
 
@@ -112,34 +108,6 @@ function MainLayout() {
         triggerAction,
     })
 
-    const speakFeedback = useCallback(text => {
-        if (!aiChat.aiOnline && "speechSynthesis" in window) {
-            window.speechSynthesis.cancel()
-            const utterance = new SpeechSynthesisUtterance(text)
-            utterance.rate = 1.05
-            utterance.pitch = 1.0
-            window.speechSynthesis.speak(utterance)
-        }
-    }, [aiChat.aiOnline])
-
-    const handleVoiceCommand = useCallback((commandText, fullUtterance) => {
-        const entry = { id: Date.now(), time: new Date().toLocaleTimeString(), full: fullUtterance, command: commandText }
-        setSentinelLog(prev => [entry, ...prev.slice(0, 20)])
-
-        if (aiChat.aiOnline) {
-            publishAi({ type: "text", role: "user", content: commandText })
-            return
-        }
-
-        const matchedAction = matchAction(commandText, aiChat.ACTIONS)
-        if (matchedAction) {
-            speakFeedback(matchedAction.reply || `Executing ${matchedAction.name}`)
-            triggerAction(matchedAction)
-        } else {
-            speakFeedback("Command not recognized.")
-        }
-    }, [aiChat.aiOnline, aiChat.ACTIONS, publishAi, triggerAction, speakFeedback])
-
     const sentinel = useContinuousWakeWord({
         publishAi,
         aiOnline: aiChat.aiOnline,
@@ -157,18 +125,29 @@ function MainLayout() {
         lastProcessedMsgRef.current = msgId
 
         sentinel.handleSentinelEvent(lastMsg)
+
+        if (lastMsg.command || lastMsg.transcript) {
+            const entry = {
+                id: Date.now(),
+                time: new Date().toLocaleTimeString(),
+                full: lastMsg.transcript || "",
+                command: lastMsg.command || lastMsg.state || "",
+            }
+            setSentinelLog(prev => [entry, ...prev.slice(0, 20)])
+        }
     }, [aiMessages, sentinel])
 
     // Directive routing is handled exclusively by useAiChat to prevent duplicate execution races
 
 
     // Hardware Watchdog Sync: Instantly stop UI animations if firmware applies emergency brakes
+    const isWatchdogBraked = Boolean(telemetry?.watchdog_braked)
     useEffect(() => {
-        if (telemetry?.watchdog_braked) {
+        if (isWatchdogBraked) {
             stopAll()
             window.dispatchEvent(new Event("hardware-watchdog-brake"))
         }
-    }, [telemetry?.watchdog_braked, stopAll])
+    }, [isWatchdogBraked, stopAll])
 
     const onPageLoad = useCallback(pageName => {
         document.title = pageName + " - Hexapod Robot Simulator"
@@ -220,7 +199,7 @@ function MainLayout() {
         publishAiConfig, publishAiMemory, publishAudio, aiMessages, clearAiMessages,
         aiStatus, audioStatus, memoryState, isConnected, deviceId, camConfig, camTelemetry,
         hexapod, revision, activeExecutingAction, triggerAction, stopAll, aiChat, smartSpeaker,
-        sentinel, sentinelLog, logs, telemetry
+        sentinel, sentinelLog, logs, clearLogs, telemetry
     ])
 
     const pageComponent = useCallback(Component => <Component {...robotContextValue} />, [robotContextValue])

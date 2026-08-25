@@ -14,7 +14,14 @@ import { usePoseFrameStream } from "./usePoseFrameStream"
 
 export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, publishAudio = () => {}, onUpdate = () => {} }) => {
     const [activeFrames, setActiveFrames] = useState([])
-    const [activeExecutingAction, setActiveExecutingAction] = useState(null)
+    const [activeExecutingAction, setActiveExecutingActionState] = useState(null)
+    const activeExecutingActionRef = useRef(null)
+
+    const setActiveExecutingAction = useCallback((action) => {
+        activeExecutingActionRef.current = action
+        setActiveExecutingActionState(action)
+    }, [])
+
     const activeReqIdRef = useRef(0)
     const currentHeadingRef = useRef(0)
     const currentPoseRef = useRef(DEFAULT_POSE)
@@ -111,7 +118,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
                 }
             })
         },
-        [stopStream, stopLocomotionTimer, publishImmediate]
+        [stopStream, stopLocomotionTimer, publishImmediate, setActiveExecutingAction]
     )
 
     const playSequence = useCallback(
@@ -152,7 +159,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
                 })
             }
         },
-        [stopStream, stopLocomotionTimer, publishImmediate]
+        [stopStream, stopLocomotionTimer, publishImmediate, setActiveExecutingAction]
     )
 
     const playLocomotion = useCallback(
@@ -170,7 +177,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
                 }
             })
         },
-        [stopStream]
+        [stopStream, setActiveExecutingAction]
     )
 
     const handleSingleJoint = useCallback(
@@ -191,10 +198,10 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
 
             const newPose = { ...currentPose, [leg]: { ...currentPose[leg], [angleParam]: targetAngle } }
             setActiveExecutingAction(`FK: ${leg} ${joint}`)
-            onUpdate("pose", { pose: newPose })
+            onUpdate("pose", { pose: newPose }, { fromStream: true, fromExecutor: true })
             publishImmediate("hexapod/cmd", buildServoBatchPayload(newPose))
         },
-        [onUpdate, publishImmediate, stopLocomotionTimer]
+        [onUpdate, publishImmediate, stopLocomotionTimer, setActiveExecutingAction]
     )
 
     const triggerAction = useCallback(
@@ -225,15 +232,17 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
                     stopStream()
                     setActiveExecutingAction(null)
                     if (!skipPublish) publishImmediate("hexapod/cmd", payload)
-                    onUpdate("pose", { pose: DEFAULT_POSE })
+                    onUpdate("pose", { pose: DEFAULT_POSE }, { fromStream: true, fromExecutor: true })
                 } else if (isPoseOnly) {
                     playParametricPose(payload, name, skipPublish)
                 } else {
                     if (!skipPublish) {
                         publishImmediate("hexapod/cmd", payload)
-                        motionIntervalRef.current = setInterval(() => {
-                            publishImmediate("hexapod/cmd", payload)
-                        }, 1000)
+                        if (effectiveDuration > 0) {
+                            motionIntervalRef.current = setInterval(() => {
+                                publishImmediate("hexapod/cmd", payload)
+                            }, 1000)
+                        }
                     }
 
                     playLocomotion(id, effectiveDuration, payload)
@@ -243,6 +252,8 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
                             stopLocomotionTimer()
                             publishImmediate("hexapod/cmd", { ...payload, vx: 0, vy: 0, omega: 0 })
                         }, effectiveDuration)
+                    } else if (!skipPublish) {
+                        stopLocomotionTimer()
                     }
                 }
             } else {
@@ -251,7 +262,7 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
                 if (!skipPublish) publishImmediate("hexapod/cmd", payload)
             }
         },
-        [publishAudio, publishImmediate, playSequence, playLocomotion, playParametricPose, stopStream, onUpdate, handleSingleJoint, stopLocomotionTimer]
+        [publishAudio, publishImmediate, playSequence, playLocomotion, playParametricPose, stopStream, onUpdate, handleSingleJoint, stopLocomotionTimer, setActiveExecutingAction]
     )
 
     const stopAll = useCallback(() => {
@@ -268,14 +279,14 @@ export const useAiMotionExecutor = ({ params = {}, publishImmediate = () => {}, 
                 const dims = paramsRef.current?.dimensions || DEFAULT_DIMENSIONS
                 const hex = new VirtualHexapod(dims, DEFAULT_POSE, { wontRotate: true })
                 const matrix = tRotZmatrix(twist)
-                onUpdate("hexapod", { hexapod: hex.cloneTrot(matrix) }, { fromStream: true })
+                onUpdate("hexapod", { hexapod: hex.cloneTrot(matrix) }, { fromStream: true, fromExecutor: true })
             } catch (e) {
-                onUpdate("pose", { pose: DEFAULT_POSE })
+                onUpdate("pose", { pose: DEFAULT_POSE }, { fromStream: true, fromExecutor: true })
             }
         } else {
-            onUpdate("pose", { pose: DEFAULT_POSE })
+            onUpdate("pose", { pose: DEFAULT_POSE }, { fromStream: true, fromExecutor: true })
         }
-    }, [stopStream, publishImmediate, onUpdate, stopLocomotionTimer])
+    }, [stopStream, publishImmediate, onUpdate, stopLocomotionTimer, setActiveExecutingAction])
 
     return { activeExecutingAction, triggerAction, stopAll }
 }

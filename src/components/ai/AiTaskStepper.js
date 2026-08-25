@@ -95,7 +95,7 @@ export const AiTaskStepper = ({
                 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
                         <span style={{ fontSize: "0.74rem", fontWeight: "bold", color: "#f8fafc", letterSpacing: "0.03em" }}>
-                            ⚡ {currentPlan.title || "VISUAL TARGET SEARCH"} {isCompleted ? "— COMPLETE" : ""}
+                            <span role="img" aria-label="lightning">⚡</span> {currentPlan.title || "VISUAL TARGET SEARCH"} {isCompleted ? "— COMPLETE" : ""}
                         </span>
 
                         {isRunning ? (

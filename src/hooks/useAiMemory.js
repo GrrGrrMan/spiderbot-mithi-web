@@ -15,14 +15,15 @@ export const useAiMemory = ({ memoryState = null, publishAiMemory = () => {}, ai
     const [notice, setNotice] = useState(null)
 
     // Sync from incoming MQTT heartbeat or topic updates
+    const aiMemory = aiStatus?.memory
     useEffect(() => {
-        const src = memoryState || aiStatus?.memory
+        const src = memoryState || aiMemory
         if (src) {
             if (src.mode) setLocalMode(src.mode)
             if (src.turns_count !== undefined) setLocalTurns(src.turns_count)
             if (src.memory_pool) setLocalPool(src.memory_pool)
         }
-    }, [memoryState, aiStatus?.memory])
+    }, [memoryState, aiMemory])
 
     const showNotice = (msg) => {
         setNotice(msg)

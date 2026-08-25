@@ -44,14 +44,15 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
     const clearAiMessages = useCallback(() => setAiMessages([]), [])
 
     // Safety watchdog: auto-clear 'playing' lock if firmware packet dropped
+    const isAudioPlaying = audioStatus?.state === "playing"
     useEffect(() => {
-        if (audioStatus?.state === "playing") {
+        if (isAudioPlaying) {
             const timer = setTimeout(() => {
                 setAudioStatus(prev => (prev?.state === "playing" ? { state: "idle", action: "timeout" } : prev))
             }, 8000)
             return () => clearTimeout(timer)
         }
-    }, [audioStatus?.state])
+    }, [isAudioPlaying])
 
     useEffect(() => {
         const resolvedUrl = brokerUrlOverride || resolveMqttBrokerUrl(searchParamsRef.current)
@@ -159,11 +160,11 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
     useEffect(() => {
         if (!isConnected || !clientRef.current) return
         const heartbeatInterval = setInterval(() => {
-            const targetTopic = `hexapod/${deviceId}/cmd`
+            const targetTopic = `hexapod/${deviceId}/heartbeat`
             try {
-                clientRef.current.publish(targetTopic, JSON.stringify({ type: "heartbeat" }))
+                clientRef.current.publish(targetTopic, JSON.stringify({ type: "heartbeat", timestamp: Date.now() }))
             } catch (err) {}
-        }, 500)
+        }, 3000)
         return () => clearInterval(heartbeatInterval)
     }, [isConnected, deviceId])
 
