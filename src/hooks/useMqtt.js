@@ -43,6 +43,16 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
     const clearLogs = useCallback(() => setLogs([]), [])
     const clearAiMessages = useCallback(() => setAiMessages([]), [])
 
+    // Safety watchdog: auto-clear 'playing' lock if firmware packet dropped
+    useEffect(() => {
+        if (audioStatus?.state === "playing") {
+            const timer = setTimeout(() => {
+                setAudioStatus(prev => (prev?.state === "playing" ? { state: "idle", action: "timeout" } : prev))
+            }, 8000)
+            return () => clearTimeout(timer)
+        }
+    }, [audioStatus?.state])
+
     useEffect(() => {
         const resolvedUrl = brokerUrlOverride || resolveMqttBrokerUrl(searchParamsRef.current)
         console.log(`[MQTT WebUI] Connecting to Pi Broker: ${resolvedUrl}`)
