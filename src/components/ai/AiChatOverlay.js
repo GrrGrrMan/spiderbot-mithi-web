@@ -110,7 +110,7 @@ export const AiChatOverlay = ({
                         // ── Instant 0ms response during drag; smooth OS-like transitions on release & toggle ──
                         transition: isDragging
                             ? "none"
-                            : "left 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), top 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease, visibility 0.35s, box-shadow 0.2s ease, border-color 0.2s ease",
+                            : "left 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), top 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease, visibility 0.2s, box-shadow 0.2s ease, border-color 0.2s ease",
                     }}
                     onClick={() => isMenuOpen && setIsMenuOpen(false)}
                 >
@@ -143,7 +143,7 @@ export const AiChatOverlay = ({
                         onPointerCancel={handlePointerCancel}
                     />
 
-                    {!isMinimized && (
+                    {!isMinimized && isOpen && (
                         <div className="no-drag" style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "10px", overflowY: "auto", flex: 1, paddingRight: "4px" }}>
                             {activeTab === "ai" ? (
                                 <HubAiView

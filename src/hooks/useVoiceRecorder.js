@@ -1,5 +1,5 @@
 // web-ui/src/hooks/useVoiceRecorder.js
-import { useState, useRef, useCallback } from "react"
+import { useState, useRef, useCallback, useEffect } from "react"
 import { buildWav, to16kPcm, bytesToBase64, VOICE_PROCESSOR_CODE } from "../utils/aiAudio"
 
 const SILENCE_RMS = 0.02
@@ -86,17 +86,30 @@ export const useVoiceRecorder = ({ onAudioRecorded = () => {} }) => {
             setTimeout(() => {
                 if (rec.workletNode) rec.workletNode.disconnect()
                 if (rec.stream) rec.stream.getTracks().forEach(t => t.stop())
-                if (rec.ctx) rec.ctx.close().catch(() => {})
+                if (rec.ctx && rec.ctx.state !== "closed") rec.ctx.close().catch(() => {})
                 recordingRef.current = {}
                 setRecording(false)
                 finalizeRecording()
             }, 40)
         } else {
+            if (rec.stream) rec.stream.getTracks().forEach(t => t.stop())
+            if (rec.ctx && rec.ctx.state !== "closed") rec.ctx.close().catch(() => {})
             recordingRef.current = {}
             setRecording(false)
             finalizeRecording()
         }
     }, [finalizeRecording])
+
+    // Cleanup audio context and media stream tracks on unmount
+    useEffect(() => {
+        return () => {
+            const rec = recordingRef.current
+            if (rec.workletNode) try { rec.workletNode.disconnect() } catch (_) {}
+            if (rec.stream) try { rec.stream.getTracks().forEach(t => t.stop()) } catch (_) {}
+            if (rec.ctx && rec.ctx.state !== "closed") try { rec.ctx.close() } catch (_) {}
+            recordingRef.current = {}
+        }
+    }, [])
 
     return { recording, micBlocked, startMic, stopMic }
 }

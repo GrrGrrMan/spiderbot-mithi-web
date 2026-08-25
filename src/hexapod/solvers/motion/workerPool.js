@@ -46,19 +46,37 @@ export function getWorker() {
                 return fullSequence;
             }
             self.onmessage = function(e) {
-                const { id, keyframes, stepsPerTransition } = e.data;
-                const frames = buildSequenceFromKeyframes(keyframes, stepsPerTransition);
-                self.postMessage({ id, frames });
+                try {
+                    const { id, keyframes, stepsPerTransition } = e.data;
+                    const frames = buildSequenceFromKeyframes(keyframes, stepsPerTransition);
+                    self.postMessage({ id, frames, success: true });
+                } catch (err) {
+                    self.postMessage({ id, error: err.message, success: false });
+                }
             };
         `
         const blob = new Blob([workerCode], { type: "application/javascript" })
-        workerInstance = new Worker(URL.createObjectURL(blob))
+        const blobUrl = URL.createObjectURL(blob)
+        workerInstance = new Worker(blobUrl)
+        URL.revokeObjectURL(blobUrl)
+
         workerInstance.onmessage = e => {
-            const { id, frames } = e.data
+            const { id, frames, error, success } = e.data
             if (pendingJobs.has(id)) {
-                pendingJobs.get(id).resolve(frames)
+                const { resolve, reject } = pendingJobs.get(id)
                 pendingJobs.delete(id)
+                if (success === false || error) {
+                    reject(new Error(error || "Worker sequence generation failed"))
+                } else {
+                    resolve(frames)
+                }
             }
+        }
+
+        workerInstance.onerror = err => {
+            console.error("[WorkerPool] Uncaught worker error:", err)
+            pendingJobs.forEach(({ reject }) => reject(err))
+            pendingJobs.clear()
         }
     }
     return workerInstance

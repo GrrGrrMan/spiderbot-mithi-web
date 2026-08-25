@@ -29,8 +29,8 @@ export const getTargetTraceUpdates = (hexapod) => {
         legs[5].allPointsList.map(p => p.x),  // 10: rightBackLeg
         groundContactPoints.map(p => p.x),    // 11: supportPolygonMesh
         [cog.x, cog.x + axisScale * xAxis.x], // 12: hexapodXaxis
-        [cog.y, cog.x + axisScale * yAxis.x], // 13: hexapodYaxis
-        [cog.z, cog.x + axisScale * zAxis.x], // 14: hexapodZaxis
+        [cog.x, cog.x + axisScale * yAxis.x], // 13: hexapodYaxis
+        [cog.x, cog.x + axisScale * zAxis.x], // 14: hexapodZaxis
     ]
 
     const y = [

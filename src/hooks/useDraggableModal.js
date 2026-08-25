@@ -5,6 +5,7 @@ const MIN_VISIBLE_X = 60 // Minimum pixels of panel kept visible on screen
 const HEADER_HEIGHT = 45
 const SNAP_EDGE_THRESHOLD = 24
 const PADDING = 10
+const DRAG_THRESHOLD = 4
 
 export const useDraggableModal = (initialX = 20, initialY = 75) => {
     const [position, setPosition] = useState({ x: initialX, y: initialY })
@@ -14,6 +15,7 @@ export const useDraggableModal = (initialX = 20, initialY = 75) => {
     const [isDragging, setIsDragging] = useState(false)
     const [isMinimized, setIsMinimized] = useState(false)
     const isDownRef = useRef(false)
+    const hasMovedRef = useRef(false)
     const pointerIdRef = useRef(null)
     const cardRef = useRef(null)
     const currentCoordRef = useRef({ x: initialX, y: initialY })
@@ -82,6 +84,7 @@ export const useDraggableModal = (initialX = 20, initialY = 75) => {
         }
 
         isDownRef.current = true
+        hasMovedRef.current = false
         pointerIdRef.current = e.pointerId
 
         const card = cardRef.current
@@ -100,7 +103,10 @@ export const useDraggableModal = (initialX = 20, initialY = 75) => {
         }
         currentCoordRef.current = { x: posRef.current.x, y: posRef.current.y }
 
-        setIsDragging(true)
+        // Kill transition immediately so drag starts at 0ms latency
+        if (card) {
+            card.style.transition = "none"
+        }
 
         try {
             e.currentTarget.setPointerCapture(e.pointerId)
@@ -114,14 +120,24 @@ export const useDraggableModal = (initialX = 20, initialY = 75) => {
         const dx = e.clientX - startX
         const dy = e.clientY - startY
 
-        // ── Permissive Dragging: Full unhindered freedom beyond edges ──
+        if (!hasMovedRef.current) {
+            if (Math.hypot(dx, dy) >= DRAG_THRESHOLD) {
+                hasMovedRef.current = true
+                setIsDragging(true)
+            } else {
+                return
+            }
+        }
+
+        // Direct 1:1 pointer tracking: 0 lag, zero delay
         const nextX = initialX + dx
         const nextY = initialY + dy
 
         currentCoordRef.current = { x: nextX, y: nextY }
 
-        // Direct-DOM instant update (120 FPS / 0 React render thrashing)
+        // Direct-DOM instant update (120 FPS / zero React render thrashing)
         if (cardRef.current) {
+            cardRef.current.style.transition = "none"
             cardRef.current.style.left = `${nextX}px`
             cardRef.current.style.top = `${nextY}px`
         }
@@ -130,7 +146,6 @@ export const useDraggableModal = (initialX = 20, initialY = 75) => {
     const handlePointerUp = useCallback(e => {
         if (!isDownRef.current) return
         isDownRef.current = false
-        setIsDragging(false)
 
         if (pointerIdRef.current !== null) {
             try {
@@ -141,20 +156,33 @@ export const useDraggableModal = (initialX = 20, initialY = 75) => {
             pointerIdRef.current = null
         }
 
-        // ── Smooth Magnetic Recovery on Release ──
-        const raw = currentCoordRef.current
-        const bounds = {
-            cardW: dragRef.current.cardW,
-            winW: dragRef.current.winW,
-            winH: dragRef.current.winH,
-        }
-        const snapped = calculateMagneticSnap(raw.x, raw.y, bounds)
+        if (hasMovedRef.current) {
+            setIsDragging(false)
+            hasMovedRef.current = false
 
-        setPosition(snapped)
+            // Smooth Magnetic Recovery on Release
+            const raw = currentCoordRef.current
+            const bounds = {
+                cardW: dragRef.current.cardW,
+                winW: dragRef.current.winW,
+                winH: dragRef.current.winH,
+            }
+            const snapped = calculateMagneticSnap(raw.x, raw.y, bounds)
 
-        if (cardRef.current) {
-            cardRef.current.style.left = `${snapped.x}px`
-            cardRef.current.style.top = `${snapped.y}px`
+            setPosition(snapped)
+
+            if (cardRef.current) {
+                // Restore CSS transition for smooth glide into place
+                cardRef.current.style.transition = ""
+                cardRef.current.style.left = `${snapped.x}px`
+                cardRef.current.style.top = `${snapped.y}px`
+            }
+        } else {
+            if (cardRef.current) {
+                cardRef.current.style.transition = ""
+            }
+            setIsDragging(false)
+            hasMovedRef.current = false
         }
     }, [calculateMagneticSnap])
 

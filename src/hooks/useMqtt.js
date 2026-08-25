@@ -36,9 +36,11 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
     const pendingPublishRef = useRef(null)
     const trailingTimerRef = useRef(null)
 
-    // Guards to prevent synchronous React render thrashing
+    // Guards to prevent synchronous React render thrashing with trailing guarantees
     const lastTelemetryUpdateRef = useRef(0)
     const lastCamTelemetryUpdateRef = useRef(0)
+    const pendingTelemetryRef = useRef(null)
+    const trailingTelemetryTimerRef = useRef(null)
 
     const clearLogs = useCallback(() => setLogs([]), [])
     const clearAiMessages = useCallback(() => setAiMessages([]), [])
@@ -98,10 +100,28 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
                             lastCamTelemetryUpdateRef.current = now
                         }
                     } else {
-                        // Throttle React state updates to 2Hz to prevent massive tree-render lag
-                        if (now - lastTelemetryUpdateRef.current > 500) {
+                        // Throttle React state updates to 2Hz with guaranteed trailing resolution
+                        const elapsed = now - lastTelemetryUpdateRef.current
+                        if (elapsed > 500) {
                             setTelemetry(parsed)
                             lastTelemetryUpdateRef.current = now
+                            pendingTelemetryRef.current = null
+                            if (trailingTelemetryTimerRef.current) {
+                                clearTimeout(trailingTelemetryTimerRef.current)
+                                trailingTelemetryTimerRef.current = null
+                            }
+                        } else {
+                            pendingTelemetryRef.current = parsed
+                            if (!trailingTelemetryTimerRef.current) {
+                                trailingTelemetryTimerRef.current = setTimeout(() => {
+                                    trailingTelemetryTimerRef.current = null
+                                    if (pendingTelemetryRef.current) {
+                                        setTelemetry(pendingTelemetryRef.current)
+                                        lastTelemetryUpdateRef.current = Date.now()
+                                        pendingTelemetryRef.current = null
+                                    }
+                                }, 500 - elapsed)
+                            }
                         }
                         
                         if (parsed.audio) {

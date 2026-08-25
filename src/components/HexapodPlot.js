@@ -35,55 +35,13 @@ class HexapodPlot extends React.Component {
         })
         
         window.addEventListener("hexapod-anim-frame", this.handleAnimFrame)
-
-        window.addEventListener("pointerdown", this.handleGlobalPointerDown, true)
-        window.addEventListener("pointerup", this.handleGlobalPointerUp, true)
-        window.addEventListener("pointercancel", this.handleGlobalPointerUp, true)
     }
 
     componentWillUnmount() {
         window.removeEventListener("hexapod-anim-frame", this.handleAnimFrame)
-
-        window.removeEventListener("pointerdown", this.handleGlobalPointerDown, true)
-        window.removeEventListener("pointerup", this.handleGlobalPointerUp, true)
-        window.removeEventListener("pointercancel", this.handleGlobalPointerUp, true)
         
         if (this.renderRafId) {
             cancelAnimationFrame(this.renderRafId)
-        }
-    }
-
-    handleGlobalPointerDown = (e) => {
-        const container = this.containerRef || this.graphDiv
-        if (!container) return
-        const isInside = container.contains(e.target)
-
-        if (isInside) {
-            this.isPlotDragging = true
-            container.style.pointerEvents = "auto"
-            try {
-                const canvas = container.querySelector("canvas") || container
-                if (e.pointerId !== undefined && canvas.setPointerCapture) {
-                    canvas.setPointerCapture(e.pointerId)
-                }
-            } catch (_) {}
-        } else {
-            this.isPlotDragging = false
-            container.style.pointerEvents = "none"
-        }
-    }
-
-    handleGlobalPointerUp = (e) => {
-        const container = this.containerRef || this.graphDiv
-        this.isPlotDragging = false
-        if (container) {
-            container.style.pointerEvents = "auto"
-            try {
-                const canvas = container.querySelector("canvas") || container
-                if (e && e.pointerId !== undefined && canvas.hasPointerCapture && canvas.hasPointerCapture(e.pointerId)) {
-                    canvas.releasePointerCapture(e.pointerId)
-                }
-            } catch (_) {}
         }
     }
 

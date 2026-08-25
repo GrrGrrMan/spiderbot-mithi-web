@@ -99,11 +99,17 @@ export const useContinuousWakeWord = ({
                 myVadRef.current = myvad
                 isInitializingRef.current = false
 
-                // If user quickly toggled OFF while loading, don't start it
                 if (enabledRef.current && isMountedRef.current) {
                     myvad.start()
                     setIsListening(true)
                     setMicError(null)
+                } else {
+                    // Safe teardown if disabled or unmounted during async compilation
+                    try { myvad.pause() } catch (_) {}
+                    if (!isMountedRef.current) {
+                        try { myvad.destroy() } catch (_) {}
+                        myVadRef.current = null
+                    }
                 }
             } catch (err) {
                 console.error("[Silero VAD] Init error:", err)

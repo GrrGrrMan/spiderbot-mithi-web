@@ -1,7 +1,7 @@
 // web-ui/src/hooks/useCornerSnap.js
 import { useState, useRef, useEffect, useCallback } from "react"
 
-const DRAG_THRESHOLD = 5
+const DRAG_THRESHOLD = 4
 
 export const useCornerSnap = ({
     boundary = "window",
@@ -106,6 +106,8 @@ export const useCornerSnap = ({
             const coords = getCornerCoords(targetCorner, customBounds)
             setPos(coords)
             if (elementRef.current) {
+                // Restore CSS transition for smooth glide into target corner
+                elementRef.current.style.transition = ""
                 elementRef.current.style.left = `${coords.x}px`
                 elementRef.current.style.top = `${coords.y}px`
             }
@@ -163,6 +165,11 @@ export const useCornerSnap = ({
         }
         targetPosRef.current = { x: posRef.current.x, y: posRef.current.y }
 
+        // Kill transition synchronously before any movement occurs
+        if (el) {
+            el.style.transition = "none"
+        }
+
         try {
             e.currentTarget.setPointerCapture(e.pointerId)
         } catch (_) {}
@@ -184,11 +191,13 @@ export const useCornerSnap = ({
             }
         }
 
+        // True 1:1 direct tracking (glued directly under cursor)
         const nextX = initialX + dx
         const nextY = initialY + dy
         targetPosRef.current = { x: nextX, y: nextY }
 
         if (elementRef.current) {
+            elementRef.current.style.transition = "none"
             elementRef.current.style.left = `${nextX}px`
             elementRef.current.style.top = `${nextY}px`
         }
@@ -214,6 +223,9 @@ export const useCornerSnap = ({
                 hasMovedRef.current = false
             }, 50)
         } else {
+            if (elementRef.current) {
+                elementRef.current.style.transition = ""
+            }
             setIsDragging(false)
             hasMovedRef.current = false
         }

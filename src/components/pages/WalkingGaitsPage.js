@@ -67,8 +67,8 @@ class WalkingGaitsPage extends Component {
             pos_x: 0,
             pos_y: -gaitParams.tx * 100.0,
             pos_z: gaitParams.tz * 132.0,
-            roll: gaitParams.rx,
-            pitch: gaitParams.ry
+            roll: gaitParams.ry,
+            pitch: gaitParams.rx
         })
     }
     componentDidMount = () => {
