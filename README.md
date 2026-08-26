@@ -188,7 +188,7 @@ This project was bootstrapped with Create React App and heavily leverages modern
    ```bash
    npm start
    ```
-   *Note: If you encounter OpenSSL errors on newer Node versions, the `package.json` already utilizes `cross-env NODE_OPTIONS=--openssl-legacy-provider` to ensure compatibility.*
+   *Note: If you encounter OpenSSL errors on newer Node versions, the `package.json` already has `cross-env NODE_OPTIONS=--openssl-legacy-provider` to ensure compatibility.*
 
 4. **Production Build:**
    ```bash
@@ -199,18 +199,18 @@ This project was bootstrapped with Create React App and heavily leverages modern
    ```bash
    npm test
    ```
-   *(Includes comprehensive Jest assertions for Kinematics, Web Workers, and React DOM trees).*
+   *(Includes Jest assertions for Kinematics, Web Workers, and React DOM trees).*
 
 ---
 
 ## Credits & Contributors
 
-This UI and physics engine builds heavily upon the amazing foundation set by Mithi's [Bare Minimum Hexapod Robot Simulator](https://github.com/mithi/hexapod). 
+This UI and physics engine builds heavily upon the foundation set by Mithi's [Bare Minimum Hexapod Robot Simulator](https://github.com/mithi/hexapod). 
 
 A huge thank you to the original creator and the open-source contributors whose efforts shaped the core math, visualization, and tooling of this project:
 
-*   **[@mithi](https://github.com/mithi)** — Original concept, mathematics, and React/Plotly architecture.
-*   **[@dependabot[bot]](https://github.com/dependabot)** — Dependency management.
+*   **[@mithi](https://github.com/mithi)**
+*   **[@dependabot[bot]](https://github.com/dependabot)**
 *   **[@icyJoseph](https://github.com/icyJoseph)**
 *   **[@mikong](https://github.com/mikong)**
 *   **[@2Shar18](https://github.com/2Shar18)**
