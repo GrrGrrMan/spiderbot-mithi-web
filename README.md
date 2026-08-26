@@ -203,6 +203,21 @@ This project was bootstrapped with Create React App and heavily leverages modern
 
 ---
 
+### Configuration & Hardcoded Defaults
+
+If you are hosting this UI externally (like on Netlify or GitHub pages) or have a custom robot setup, you may need to adjust the hardcoded networking and hardware defaults. You can find these configurations in the following files:
+
+*   **`src/utils/networkConfig.js`**
+    Contains the default MQTT broker hostname (`spider-w.local`), default WebSocket ports (`9001`), and resolving logic for the camera MJPEG stream.
+*   **`src/hooks/useMqtt.js`**
+    Contains the default MQTT device IDs (`hexapod-s3-01` and `hexapod-cam-01`). *(Note: These can also be overridden via URL parameters like `?device=my-robot&cam=my-cam`).*
+*   **`src/templates/hexapodParams.js`**
+    Contains the default physical dimensions (coxa, femur, tibia lengths) and default startup poses. Change these if your physical robot has different leg proportions.
+*   **`src/constants/aiActions.json`**
+    The canonical AI action registry. Modify this file to change voice command keywords, duration, or the exact kinematic payloads sent to the robot.
+
+---
+
 ## Credits & Contributors
 
 This UI and physics engine builds heavily upon the foundation set by Mithi's [Bare Minimum Hexapod Robot Simulator](https://github.com/mithi/hexapod). 
