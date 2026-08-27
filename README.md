@@ -1,12 +1,12 @@
 # Hexapod V2 — Web UI & AI Simulator
 
-[![Platform](https://img.shields.io/badge/Platform-Web%20Browser-blue.svg)](https://developer.mozilla.org/en-US/docs/Web)
-[![React](https://img.shields.io/badge/React-v16.13-61DAFB.svg)](https://reactjs.org/)
-[![Plotly](https://img.shields.io/badge/Plotly.js-WebGL%203D-purple.svg)](https://plotly.com/javascript/)
-[![MQTT](https://img.shields.io/badge/MQTT-Real--Time%20Telemetry-orange.svg)](https://mqtt.org/)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Web%20Browser-18181b?style=flat-square)](https://developer.mozilla.org/en-US/docs/Web)
+[![React](https://img.shields.io/badge/React-v16.13-18181b?style=flat-square&logo=react&logoColor=61DAFB)](https://reactjs.org/)
+[![Plotly](https://img.shields.io/badge/Plotly.js-WebGL%203D-18181b?style=flat-square&logo=plotly&logoColor=white)](https://plotly.com/javascript/)
+[![MQTT](https://img.shields.io/badge/MQTT-Real--Time%20Telemetry-18181b?style=flat-square&logo=mqtt&logoColor=white)](https://mqtt.org/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-18181b?style=flat-square)](LICENSE)
 
-The **Hexapod V2 Web UI** is the primary human-machine interface and 3D simulation environment for the Hexapod robotics platform. Building upon Mithi's original "Bare Minimum Hexapod Robot Simulator", this V2 iteration introduces real-time MQTT hardware telemetry, a dual-stage MJPEG camera viewport, a local WebGL kinematics engine, and a fully integrated AI Copilot with browser-based Voice Activity Detection (VAD).
+The **Hexapod V2 Web UI** is the primary human-machine interface and 3D simulation environment for the Hexapod robotics platform. Building upon Mithi's original *Bare Minimum Hexapod Robot Simulator*, this V2 iteration introduces real-time MQTT hardware telemetry, a dual-stage MJPEG camera viewport, a local WebGL kinematics engine, and an integrated AI Copilot with browser-based Voice Activity Detection (VAD).
 
 ---
 
@@ -16,10 +16,11 @@ The **Hexapod V2 Web UI** is the primary human-machine interface and 3D simulati
 - [Core Workflows](#core-workflows)
   - [1. Real-Time Teleoperation & 3D Simulation](#1-real-time-teleoperation--3d-simulation)
   - [2. Smart Speaker & AI Command Execution](#2-smart-speaker--ai-command-execution)
-- [UI Modules & Features](#ui-modules--features)
+- [UI Modules & Capabilities](#ui-modules--capabilities)
 - [Kinematics & Motion Synthesis](#kinematics--motion-synthesis)
 - [Directory Structure](#directory-structure)
 - [Installation & Development](#installation--development)
+- [Configuration Defaults](#configuration-defaults)
 - [Credits & Contributors](#credits--contributors)
 - [License](#license)
 
@@ -63,7 +64,7 @@ flowchart TD
 ## Core Workflows
 
 ### 1. Real-Time Teleoperation & 3D Simulation
-The UI provides immediate visual feedback for Inverse/Forward Kinematics and Gait generation. Adjusting a slider in the browser instantly updates the 3D WebGL plot and throttles a synchronized command stream to the hardware.
+The UI provides immediate visual feedback for Inverse/Forward Kinematics and Gait generation. Adjusting a slider in the browser updates the 3D WebGL plot and throttles a synchronized command stream to the hardware.
 
 ```mermaid
 sequenceDiagram
@@ -85,7 +86,7 @@ sequenceDiagram
 ```
 
 ### 2. Smart Speaker & AI Command Execution
-The Web UI acts as a local smart speaker. Utilizing `@ricky0123/vad-web` and an ONNX runtime directly in the browser, the UI detects speech, buffers it, and relays it to the Pi-Hub AI service for processing, rendering the AI's "thoughts" and actions dynamically.
+The Web UI functions as a local smart speaker. Utilizing `@ricky0123/vad-web` and an ONNX runtime directly in the browser, the UI detects speech, buffers it, and relays it to the Pi-Hub AI service for processing.
 
 ```mermaid
 sequenceDiagram
@@ -109,24 +110,24 @@ sequenceDiagram
 
 ---
 
-## UI Modules & Features
+## UI Modules & Capabilities
 
-- **Dual-Stage Viewport:** A split-screen mode combining a live ESP32-CAM MJPEG feed (with connection watchdog and reconnect logic) and the Plotly 3D virtual simulator.
-- **Control Hub (Floating FAB):** A draggable, corner-snapping overlay modal containing the AI Chat Terminal, System Logs, Power Controls, and Memory Manager.
-- **Kinematics Dashboards:** Dedicated routing pages for calculating and visualizing Forward Kinematics, Inverse Kinematics, and Leg Patterns.
-- **AI Task Stepper:** A dynamic UI component that visualizes the LLM's real-time reasoning pipeline (Chain of Thought), tokens-per-second, and step-by-step execution plans.
-- **Memory Manager:** A visual interface to inspect and modify the robot's context pool (Session vs. Persistent memory).
+* **Dual-Stage Viewport** — Split-screen interface pairing a live ESP32-CAM MJPEG feed (with automatic reconnection watchdog) alongside the Plotly 3D virtual simulator.
+* **Control Hub (Floating Overlay)** — Draggable, corner-snapping overlay containing the AI Chat Terminal, System Logs, Power Controls, and Memory Manager.
+* **Kinematics Dashboards** — Dedicated route views for computing and inspecting Forward Kinematics, Inverse Kinematics, and Custom Leg Patterns.
+* **AI Task Stepper** — Live pipeline visualizer exposing the LLM's chain-of-thought reasoning, token throughput, and step execution progress.
+* **Memory Manager** — Visual inspector to examine and mutate session-level and persistent robot context parameters.
 
 ---
 
 ## Kinematics & Motion Synthesis
 
-To prevent the React main thread from blocking during complex gait calculations, the UI utilizes a highly optimized kinematic solver and Web Worker pool:
+To prevent the React main thread from blocking during high-frequency calculations, motion synthesis is decoupled into a dedicated Web Worker pool:
 
-1. **Virtual Hexapod Core:** Analytically computes 6-DOF body orientations, center-of-gravity projections, and foot-tip intersection geometry (`VirtualHexapod.js`, `LinkageIKSolver.js`).
-2. **Motion Interpolation:** Calculates continuous bezier/quintic trajectories between poses (`interpolation.js`).
-3. **Web Worker Offloading:** Complex multi-cycle dynamic sequences (e.g., dance, cheer, wave) are piped into a background `Worker`, returning a high-framerate pose array for the 3D visualizer without stuttering the browser (`workerPool.js`).
-4. **Omnidirectional Walk Sequence Solver:** Generates discrete tripod and ripple gait paths supporting variable hip swing, lift height, and body stances (`walkSequenceSolver.js`).
+1. **Virtual Hexapod Core:** Analytically calculates 6-DOF body orientations, center-of-gravity projections, and foot-tip intersection geometry (`VirtualHexapod.js`, `LinkageIKSolver.js`).
+2. **Motion Interpolation:** Generates continuous quintic and Bézier trajectories between distinct kinematic poses (`interpolation.js`).
+3. **Web Worker Offloading:** Multi-cycle dynamic sequences (such as complex gaits and dances) are offloaded to background threads, delivering 60 FPS pose arrays without UI latency (`workerPool.js`).
+4. **Omnidirectional Gait Solver:** Resolves discrete tripod and ripple gait paths with configurable hip swing, clearance height, and base stance dimensions (`walkSequenceSolver.js`).
 
 ---
 
@@ -134,105 +135,102 @@ To prevent the React main thread from blocking during complex gait calculations,
 
 ```text
 web-ui/
-├── public/                 # Static assets, manifests, and index.html
-├── scripts/                # Build analyzers (Webpack Bundle Analyzer)
+├── public/                 # Static assets, manifests, and HTML shell
+├── scripts/                # Webpack bundle analyzers and build utilities
 ├── src/
-│   ├── components/         # Reusable React UI Components
+│   ├── components/         # Modular React components
 │   │   ├── ai/             # Chat terminal, Action Grids, Status bars
-│   │   ├── camera/         # MJPEG Streamer and Offline placeholders
+│   │   ├── camera/         # MJPEG Streamer and fallback views
 │   │   ├── generic/        # Sliders, Toggle Switches, Number Inputs
 │   │   ├── hub/            # Floating Draggable Control Modal
 │   │   ├── pages/          # Full-screen routes (IK, FK, Gaits, AI Panel)
-│   │   └── viewport/       # 3D Plotly integration & view toggles
-│   ├── context/            # React Context (RobotProvider)
-│   ├── hexapod/            # Core Mathematics & Geometry Engine
-│   │   ├── solvers/        # IK/FK Solvers & Web Worker Motion Synthesis
-│   │   ├── Hexagon.js      # Body mesh calculations
-│   │   ├── Linkage.js      # Leg geometry matrices
-│   │   └── Vector.js       # 3D Vector math
+│   │   └── viewport/       # Plotly 3D integration & canvas controls
+│   ├── context/            # React Context stores (RobotProvider)
+│   ├── hexapod/            # Kinematic equations & geometric models
+│   │   ├── solvers/        # IK/FK solvers and Web Worker motion engines
+│   │   ├── Hexagon.js      # Chassis mesh calculations
+│   │   ├── Linkage.js      # Leg geometry transformation matrices
+│   │   └── Vector.js       # 3D Vector math utilities
 │   ├── hooks/              # Custom React Hooks
-│   │   ├── useAiChat.js    # AI state management & MQTT mapping
-│   │   ├── useMqtt.js      # Core Websocket MQTT connection loop
-│   │   └── useVoiceRecorder.js # ONNX/VAD audio processor
-│   ├── styles/             # Tailwind CSS configurations
-│   ├── templates/          # Default Hardware dimensions & Plotly settings
-│   └── utils/              # Network discovery, Audio manipulation, Action parsing
-└── package.json            # Node dependencies
+│   │   ├── useAiChat.js    # AI state management & telemetry mapping
+│   │   ├── useMqtt.js      # WebSocket MQTT connection lifecycle
+│   │   └── useVoiceRecorder.js # ONNX/VAD audio capture pipeline
+│   ├── styles/             # Tailwind CSS stylesheets and design tokens
+│   ├── templates/          # Default chassis dimensions & Plotly scene configs
+│   └── utils/              # Network discovery, audio parsing, action registries
+└── package.json            # Manifest and dependencies
 ```
 
 ---
 
 ## Installation & Development
 
-This project was bootstrapped with Create React App and heavily leverages modern React Hooks.
-
 ### Prerequisites
-- **Node.js**: v14.x or v16.x recommended.
-- **Yarn or npm**.
+* **Node.js**: v14.x or v16.x recommended.
+* **Package Manager**: npm or yarn.
 
 ### Setup Instructions
 
-1. **Install Dependencies:**
+1. **Install dependencies:**
    ```bash
    cd web-ui
    npm install
    ```
 
-2. **Build Tailwind CSS (Optional/Dev):**
+2. **Build Tailwind CSS assets:**
    ```bash
    npm run tailwind:build
-   # Or run the watcher in a separate terminal: npm run tailwind:watch
+   # Watch mode: npm run tailwind:watch
    ```
 
-3. **Start Development Server:**
+3. **Start local development server:**
    ```bash
    npm start
    ```
-   *Note: If you encounter OpenSSL errors on newer Node versions, the `package.json` already has `cross-env NODE_OPTIONS=--openssl-legacy-provider` to ensure compatibility.*
 
-4. **Production Build:**
+> [!NOTE]
+> On newer Node.js runtimes (Node 17+), legacy OpenSSL encryption flags are required. The repository includes `cross-env NODE_OPTIONS=--openssl-legacy-provider` inside `package.json` to handle this automatically.
+
+4. **Compile production build:**
    ```bash
    npm run build
    ```
 
-5. **Run Test Suite:**
+5. **Execute test suite:**
    ```bash
    npm test
    ```
-   *(Includes Jest assertions for Kinematics, Web Workers, and React DOM trees).*
 
 ---
 
-### Configuration & Hardcoded Defaults
+## Configuration Defaults
 
-If you are hosting this UI externally (like on Netlify or GitHub pages) or have a custom robot setup, you may need to adjust the hardcoded networking and hardware defaults. You can find these configurations in the following files:
+When hosting externally (such as Netlify or GitHub Pages) or connecting to custom hardware, configure runtime parameters in the following target files:
 
-*   **`src/utils/networkConfig.js`**
-    Contains the default MQTT broker hostname (`spider-w.local`), default WebSocket ports (`9001`), and resolving logic for the camera MJPEG stream.
-*   **`src/hooks/useMqtt.js`**
-    Contains the default MQTT device IDs (`hexapod-s3-01` and `hexapod-cam-01`). *(Note: These can also be overridden via URL parameters like `?device=my-robot&cam=my-cam`).*
-*   **`src/templates/hexapodParams.js`**
-    Contains the default physical dimensions (coxa, femur, tibia lengths) and default startup poses. Change these if your physical robot has different leg proportions.
-*   **`src/constants/aiActions.json`**
-    The canonical AI action registry. Modify this file to change voice command keywords, duration, or the exact kinematic payloads sent to the robot.
+* **`src/utils/networkConfig.js`**  
+  Configures default MQTT broker hostnames (`spider-w.local`), WebSocket ports (`9001`), and reverse proxy pathways for the MJPEG video stream.
+* **`src/hooks/useMqtt.js`**  
+  Sets default client device identifiers (`hexapod-s3-01` and `hexapod-cam-01`). Can be overridden dynamically using URL search parameters (e.g., `?device=my-robot&cam=my-cam`).
+* **`src/templates/hexapodParams.js`**  
+  Defines mechanical link lengths (coxa, femur, tibia) and initial home stance offsets.
+* **`src/constants/aiActions.json`**  
+  The centralized action schema mapping voice keywords, duration limits, and inverse kinematic matrices.
 
 ---
 
 ## Credits & Contributors
 
-This UI and physics engine builds heavily upon the foundation set by Mithi's [Bare Minimum Hexapod Robot Simulator](https://github.com/mithi/hexapod). 
+This interface builds upon the core simulation framework created by Mithi in the [Bare Minimum Hexapod Robot Simulator](https://github.com/mithi/hexapod).
 
-A huge thank you to the original creator and the open-source contributors whose efforts shaped the core math, visualization, and tooling of this project:
-
-*   **[@mithi](https://github.com/mithi)**
-*   **[@dependabot[bot]](https://github.com/dependabot)**
-*   **[@icyJoseph](https://github.com/icyJoseph)**
-*   **[@mikong](https://github.com/mikong)**
-*   **[@2Shar18](https://github.com/2Shar18)**
-*   **[@nitesh-sharma-01](https://github.com/nitesh-sharma-01)**
+* [@mithi](https://github.com/mithi)
+* [@dependabot[bot]](https://github.com/dependabot)
+* [@icyJoseph](https://github.com/icyJoseph)
+* [@mikong](https://github.com/mikong)
+* [@2Shar18](https://github.com/2Shar18)
+* [@nitesh-sharma-01](https://github.com/nitesh-sharma-01)
 
 ---
 
 ## License
 
-This project is licensed under the Apache License 2.0 License. See the [LICENSE](LICENSE) file for complete details.
+This project is distributed under the Apache License 2.0. See the [LICENSE](LICENSE) file for complete details.
