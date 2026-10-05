@@ -1,5 +1,5 @@
 // web-ui/src/components/ai/AiChatOverlay.js
-import React, { useState, useCallback } from "react"
+import React, { useState, useEffect, useCallback } from "react"
 import { FaRobot, FaTerminal, FaNetworkWired } from "react-icons/fa"
 import { useDraggableModal } from "../../hooks/useDraggableModal"
 import { useCornerSnap } from "../../hooks/useCornerSnap"
