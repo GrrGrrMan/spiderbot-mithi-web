@@ -1,5 +1,6 @@
 // web-ui/src/components/ai/AiLlmConfigSection.js
 import React, { useState, useEffect } from "react"
+import { settingsStorage } from "../../services/storage"
 
 export const AiLlmConfigSection = ({ aiStatus, onUpdateConfig, onNotify }) => {
     const llm = aiStatus?.llm || {}
@@ -18,12 +19,16 @@ export const AiLlmConfigSection = ({ aiStatus, onUpdateConfig, onNotify }) => {
         { id: "guard", label: "Guard" },
     ]
 
-    const [model, setModel] = useState(llm.model || "hexapod-vision")
-    const [visionModel, setVisionModel] = useState(llm.vision_model || "hexapod-vision")
-    const [thinkingLevel, setThinkingLevel] = useState(llm.thinking_level || "off")
-    const [personality, setPersonality] = useState(llm.personality || "friendly")
-    const [temperature, setTemperature] = useState(llm.temperature ?? 0.3)
-    const [customInstructions, setCustomInstructions] = useState(llm.custom_instructions || "")
+    const cachedLlm = settingsStorage.getSlice("llm") || {}
+
+    const [model, setModel] = useState(llm.model || cachedLlm.model || "hexapod-vision")
+    const [visionModel, setVisionModel] = useState(llm.vision_model || cachedLlm.visionModel || "hexapod-vision")
+    const [thinkingLevel, setThinkingLevel] = useState(llm.thinking_level || cachedLlm.thinkingLevel || "off")
+    const [personality, setPersonality] = useState(llm.personality || cachedLlm.personality || "friendly")
+    const [temperature, setTemperature] = useState(llm.temperature ?? cachedLlm.temperature ?? 0.3)
+    const [customInstructions, setCustomInstructions] = useState(
+        llm.custom_instructions !== undefined ? llm.custom_instructions : (cachedLlm.customInstructions || "")
+    )
 
     useEffect(() => {
         if (llm.model) setModel(llm.model)
@@ -34,14 +39,41 @@ export const AiLlmConfigSection = ({ aiStatus, onUpdateConfig, onNotify }) => {
         if (llm.custom_instructions !== undefined) setCustomInstructions(llm.custom_instructions)
     }, [llm.model, llm.vision_model, llm.thinking_level, llm.personality, llm.temperature, llm.custom_instructions])
 
+    // Cross-tab synchronization for LLM parameters
+    useEffect(() => {
+        const unsubscribe = settingsStorage.subscribe((allSettings, sliceKey) => {
+            if (!sliceKey || sliceKey === "llm") {
+                const fresh = settingsStorage.getSlice("llm")
+                if (fresh) {
+                    if (fresh.model) setModel(fresh.model)
+                    if (fresh.visionModel) setVisionModel(fresh.visionModel)
+                    if (fresh.thinkingLevel) setThinkingLevel(fresh.thinkingLevel)
+                    if (fresh.personality) setPersonality(fresh.personality)
+                    if (fresh.temperature !== undefined) setTemperature(fresh.temperature)
+                    if (fresh.customInstructions !== undefined) setCustomInstructions(fresh.customInstructions)
+                }
+            }
+        })
+        return () => unsubscribe()
+    }, [])
+
     const handleApply = () => {
-        onUpdateConfig({
+        const payload = {
             model: model.trim(),
             vision_model: visionModel.trim(),
             thinking_level: thinkingLevel,
             personality: personality,
             temperature: parseFloat(temperature),
             custom_instructions: customInstructions.trim(),
+        }
+        onUpdateConfig(payload)
+        settingsStorage.setSlice("llm", {
+            model: payload.model,
+            visionModel: payload.vision_model,
+            thinkingLevel: payload.thinking_level,
+            personality: payload.personality,
+            temperature: payload.temperature,
+            customInstructions: payload.custom_instructions,
         })
         if (onNotify) onNotify("LLM params saved!")
     }
@@ -63,6 +95,7 @@ export const AiLlmConfigSection = ({ aiStatus, onUpdateConfig, onNotify }) => {
                                 onClick={() => {
                                     setThinkingLevel(id)
                                     onUpdateConfig({ thinking_level: id })
+                                    settingsStorage.setSlice("llm", { thinkingLevel: id })
                                 }}
                                 style={{
                                     ...pillBtnStyle,
@@ -94,6 +127,7 @@ export const AiLlmConfigSection = ({ aiStatus, onUpdateConfig, onNotify }) => {
                                 onClick={() => {
                                     setPersonality(id)
                                     onUpdateConfig({ personality: id })
+                                    settingsStorage.setSlice("llm", { personality: id })
                                 }}
                                 style={{
                                     ...pillBtnStyle,

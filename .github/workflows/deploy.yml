@@ -1,0 +1,61 @@
+name: Deploy Hexapod Web UI to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 16.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 16
+          cache: "npm"
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Compile Tailwind CSS Production Assets
+        run: npm run tailwind:build
+
+      - name: Compile React Production Webpack Bundle
+        run: npm run build
+        env:
+          NODE_OPTIONS: "--openssl-legacy-provider"
+          PUBLIC_URL: "."
+
+      - name: Setup GitHub Pages Artifact
+        uses: actions/configure-pages@v4
+
+      - name: Upload Build Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "build/"
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

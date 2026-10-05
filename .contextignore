@@ -1,0 +1,61 @@
+# ==============================================================================
+# AI CONTEXT EXCLUSIONS (.contextignore)
+# ==============================================================================
+
+# VCS, Tooling & IDE
+.git/
+.github/
+.vscode/
+.venv/
+__pycache__/
+
+# Dependencies & Massive Lockfiles
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Build Outputs & Binary Archives
+build/
+dist/
+coverage/
+*.tar.gz
+*.zip
+*.tar
+
+# Generated CSS & Source Maps
+src/tailwind-output.css
+*.min.css
+*.min.js
+*.map
+
+# Media & Static Public Binaries
+public/img/
+public/*.ico
+public/*.png
+public/*.gif
+
+# Test Suites & Coordinate Fixtures
+src/tests/
+**/__tests__/
+**/*.test.js
+**/*.spec.js
+
+# Governance & Community Docs (Preserve README.md only)
+.codeclimate.yml
+codecov.yml
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+LICENSE
+before_commit.sh
+
+# Logs & Secrets
+*.log
+.env*
+!.env.example
+
+# Context Gathering Scripts (Prevent Self-Ingestion)
+treeview.py
+collect_context.py
+additional_exclusions.txt
+.contextignore

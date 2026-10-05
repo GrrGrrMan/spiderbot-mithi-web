@@ -1,16 +1,19 @@
 // web-ui/src/components/ai/AiChatOverlay.js
 import React, { useState, useCallback } from "react"
-import { FaRobot, FaTerminal } from "react-icons/fa"
+import { FaRobot, FaTerminal, FaNetworkWired } from "react-icons/fa"
 import { useDraggableModal } from "../../hooks/useDraggableModal"
 import { useCornerSnap } from "../../hooks/useCornerSnap"
 import { HubFab } from "../hub/HubFab"
 import { HubHeader } from "../hub/HubHeader"
 import { HubAiView } from "../hub/HubAiView"
 import { HubSystemView } from "../hub/HubSystemView"
+import { HubMqttView } from "../hub/HubMqttView"
+import { settingsStorage } from "../../services/storage"
 
 const TAB_CONFIG = [
     { id: "ai", label: "AI Copilot & Gestures", icon: FaRobot, color: "var(--c1-green)" },
     { id: "system", label: "System Console & Logs", icon: FaTerminal, color: "var(--c4-blue)" },
+    { id: "mqtt", label: "MQTT & Broker Targeting", icon: FaNetworkWired, color: "var(--c3-orange)" },
 ]
 
 export const AiChatOverlay = ({
@@ -22,6 +25,13 @@ export const AiChatOverlay = ({
     aiStatus = null,
     audioStatus = null,
     isConnected = false,
+    isConnecting = false,
+    connectionError = null,
+    latencyRtt = null,
+    activeConfig = {},
+    connectToBroker = () => {},
+    disconnect = () => {},
+    reconnect = () => {},
     clearAiMessages = () => {},
     logs = [],
     clearLogs = () => {},
@@ -34,7 +44,28 @@ export const AiChatOverlay = ({
     sentinel,
     sentinelLog,
 }) => {
-    const [activeTab, setActiveTab] = useState("ai")
+    const [activeTab, setActiveTabState] = useState(() => {
+        const cachedUi = settingsStorage.getSlice("ui")
+        return cachedUi?.activeTab || "ai"
+    })
+
+    const setActiveTab = useCallback((nextTab) => {
+        setActiveTabState(nextTab)
+        settingsStorage.setSlice("ui", { activeTab: nextTab })
+    }, [])
+
+    useEffect(() => {
+        const unsubscribe = settingsStorage.subscribe((allSettings, sliceKey) => {
+            if (!sliceKey || sliceKey === "ui") {
+                const cachedUi = settingsStorage.getSlice("ui")
+                if (cachedUi?.activeTab && cachedUi.activeTab !== activeTab) {
+                    setActiveTabState(cachedUi.activeTab)
+                }
+            }
+        })
+        return () => unsubscribe()
+    }, [activeTab])
+
     const [isMenuOpen, setIsMenuOpen] = useState(false)
     const [localIsAwake, setLocalIsAwake] = useState(true)
 
@@ -66,14 +97,14 @@ export const AiChatOverlay = ({
         defaultHeight: 42,
     })
 
-    const activeConfig = TAB_CONFIG.find(t => t.id === activeTab) || TAB_CONFIG[0]
+    const activeConfigTab = TAB_CONFIG.find(t => t.id === activeTab) || TAB_CONFIG[0]
 
     return (
         <>
             <HubFab 
                 isOpen={isOpen} 
                 onToggle={onToggle} 
-                activeColor={activeConfig.color} 
+                activeColor={activeConfigTab.color} 
                 isExecuting={Boolean(activeExecutingAction)} 
                 cornerSnap={cornerSnap} 
             />
@@ -89,107 +120,126 @@ export const AiChatOverlay = ({
                     pointerEvents: isOpen ? "auto" : "none",
                     visibility: isOpen ? "visible" : "hidden",
                     transformOrigin: "top left",
-                        width: "440px",
-                        maxWidth: "calc(100vw - 20px)",
-                        maxHeight: "calc(100vh - 85px)",
-                        display: "flex",
-                        flexDirection: "column",
-                        overflow: "hidden",
-                        zIndex: 80,
-                        backgroundColor: "rgba(15, 23, 42, 0.96)",
-                        backdropFilter: "blur(14px)",
-                        border: `1.5px solid ${isDragging ? "var(--c1-green)" : "var(--c4-blue)"}`,
-                        borderRadius: "10px",
-                        padding: "10px 12px",
-                        boxShadow: isDragging
-                            ? "0 18px 45px rgba(0, 0, 0, 0.85), 0 0 25px rgba(50, 255, 126, 0.35)"
-                            : "0 12px 36px rgba(0, 0, 0, 0.75), 0 0 18px rgba(41, 128, 185, 0.3)",
-                        userSelect: isDragging ? "none" : "auto",
-                        touchAction: "none",
-                        willChange: isDragging ? "left, top" : "auto",
-                        // ── Instant 0ms response during drag; smooth OS-like transitions on release & toggle ──
-                        transition: isDragging
-                            ? "none"
-                            : "left 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), top 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease, visibility 0.2s, box-shadow 0.2s ease, border-color 0.2s ease",
+                    width: "440px",
+                    maxWidth: "calc(100vw - 20px)",
+                    maxHeight: "calc(100vh - 85px)",
+                    display: "flex",
+                    flexDirection: "column",
+                    overflow: "hidden",
+                    zIndex: 80,
+                    backgroundColor: "rgba(15, 23, 42, 0.96)",
+                    backdropFilter: "blur(14px)",
+                    border: `1.5px solid ${isDragging ? "var(--c1-green)" : "var(--c4-blue)"}`,
+                    borderRadius: "10px",
+                    padding: "10px 12px",
+                    boxShadow: isDragging
+                        ? "0 18px 45px rgba(0, 0, 0, 0.85), 0 0 25px rgba(50, 255, 126, 0.35)"
+                        : "0 12px 36px rgba(0, 0, 0, 0.75), 0 0 18px rgba(41, 128, 185, 0.3)",
+                    userSelect: isDragging ? "none" : "auto",
+                    touchAction: "none",
+                    willChange: isDragging ? "left, top" : "auto",
+                    transition: isDragging
+                        ? "none"
+                        : "left 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), top 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease, visibility 0.2s, box-shadow 0.2s ease, border-color 0.2s ease",
+                }}
+                onClick={() => isMenuOpen && setIsMenuOpen(false)}
+            >
+                <HubHeader
+                    tabConfig={TAB_CONFIG}
+                    activeTab={activeTab}
+                    onSelectTab={setActiveTab}
+                    isMenuOpen={isMenuOpen}
+                    setIsMenuOpen={setIsMenuOpen}
+                    isDragging={isDragging}
+                    activeExecutingAction={activeExecutingAction}
+                    onClear={() => {
+                        if (activeTab === "ai") {
+                            if (aiChat && aiChat.setMessages) aiChat.setMessages([])
+                            clearAiMessages()
+                        } else if (activeTab === "system") {
+                            clearLogs()
+                        }
                     }}
-                    onClick={() => isMenuOpen && setIsMenuOpen(false)}
-                >
-                    <HubHeader
-                        tabConfig={TAB_CONFIG}
-                        activeTab={activeTab}
-                        onSelectTab={setActiveTab}
-                        isMenuOpen={isMenuOpen}
-                        setIsMenuOpen={setIsMenuOpen}
-                        isDragging={isDragging}
-                        activeExecutingAction={activeExecutingAction}
-                        onClear={() => {
-                            if (activeTab === "ai") {
-                                if (aiChat && aiChat.setMessages) {
-                                    aiChat.setMessages([])
-                                }
-                                clearAiMessages()
-                            } else {
-                                clearLogs()
-                            }
-                        }}
-                        isMinimized={isMinimized}
-                        onToggleMinimize={() => setIsMinimized(prev => !prev)}
-                        onClose={onToggle}
-                        telemetry={telemetry}
-                        isAwake={isAwake}
-                        onPointerDown={handlePointerDown}
-                        onPointerMove={handlePointerMove}
-                        onPointerUp={handlePointerUp}
-                        onPointerCancel={handlePointerCancel}
-                    />
+                    isMinimized={isMinimized}
+                    onToggleMinimize={() => setIsMinimized(prev => !prev)}
+                    onClose={onToggle}
+                    telemetry={telemetry}
+                    isAwake={isAwake}
+                    onPointerDown={handlePointerDown}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    onPointerCancel={handlePointerCancel}
+                />
 
-                    {!isMinimized && isOpen && (
-                        <div className="no-drag" style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "10px", overflowY: "auto", flex: 1, paddingRight: "4px" }}>
-                            {activeTab === "ai" ? (
-                                <HubAiView
-                                    aiOnline={aiChat?.aiOnline}
-                                    aiStatus={aiStatus}
-                                    audioStatus={audioStatus}
-                                    isConnected={isConnected}
-                                    messages={aiChat?.messages || []}
-                                    input={aiChat?.input || ""}
-                                    setInput={aiChat?.setInput}
-                                    onSend={aiChat?.handleSend}
-                                    recording={aiChat?.recording}
-                                    onToggleMic={aiChat?.recording ? aiChat?.stopMic : aiChat?.startMic}
-                                    micBlocked={aiChat?.micBlocked}
-                                    actions={aiChat?.ACTIONS || []}
-                                    activeExecutingAction={activeExecutingAction}
-                                    onExecuteAction={aiChat?.handleExecuteAction}
-                                    onStopAll={stopAll}
-                                    isThinking={aiChat?.isThinking}
-                                    thoughtText={aiChat?.thoughtText}
-                                    thoughtTps={aiChat?.thoughtTps}
-                                    thoughtElapsed={aiChat?.thoughtElapsed}
-                                    currentPlan={aiChat?.currentPlan}
-                                    activeStepIndex={aiChat?.activeStepIndex}
-                                    isConfigOpen={aiChat?.isConfigOpen}
-                                    setIsConfigOpen={aiChat?.setIsConfigOpen}
-                                    onUpdateConfig={aiChat?.handleUpdateConfig}
-                                    smartSpeaker={smartSpeaker}
-                                    setSmartSpeaker={setSmartSpeaker}
-                                    sentinel={sentinel}
-                                    sentinelLog={sentinelLog}
-                                    memoryState={memoryState || aiChat?.memoryState}
-                                    publishAiMemory={publishAiMemory || aiChat?.publishAiMemory}
-                                />
-                            ) : (
-                                <HubSystemView
-                                    publishImmediate={publishImmediate}
-                                    isAwake={isAwake}
-                                    onTogglePower={handlePowerToggle}
-                                    logs={logs}
-                                    clearLogs={clearLogs}
-                                />
-                            )}
-                        </div>
-                    )}
-                </div>
+                {!isMinimized && isOpen && (
+                    <div
+                        className="no-drag"
+                        style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "8px",
+                            marginTop: "10px",
+                            overflowY: "auto",
+                            flex: 1,
+                            paddingRight: "4px",
+                        }}
+                    >
+                        {activeTab === "ai" ? (
+                            <HubAiView
+                                aiOnline={aiChat?.aiOnline}
+                                aiStatus={aiStatus}
+                                audioStatus={audioStatus}
+                                isConnected={isConnected}
+                                messages={aiChat?.messages || []}
+                                input={aiChat?.input || ""}
+                                setInput={aiChat?.setInput}
+                                onSend={aiChat?.handleSend}
+                                recording={aiChat?.recording}
+                                onToggleMic={aiChat?.recording ? aiChat?.stopMic : aiChat?.startMic}
+                                micBlocked={aiChat?.micBlocked}
+                                actions={aiChat?.ACTIONS || []}
+                                activeExecutingAction={activeExecutingAction}
+                                onExecuteAction={aiChat?.handleExecuteAction}
+                                onStopAll={stopAll}
+                                isThinking={aiChat?.isThinking}
+                                thoughtText={aiChat?.thoughtText}
+                                thoughtTps={aiChat?.thoughtTps}
+                                thoughtElapsed={aiChat?.thoughtElapsed}
+                                currentPlan={aiChat?.currentPlan}
+                                activeStepIndex={aiChat?.activeStepIndex}
+                                isConfigOpen={aiChat?.isConfigOpen}
+                                setIsConfigOpen={aiChat?.setIsConfigOpen}
+                                onUpdateConfig={aiChat?.handleUpdateConfig}
+                                smartSpeaker={smartSpeaker}
+                                setSmartSpeaker={setSmartSpeaker}
+                                sentinel={sentinel}
+                                sentinelLog={sentinelLog}
+                                memoryState={memoryState || aiChat?.memoryState}
+                                publishAiMemory={publishAiMemory || aiChat?.publishAiMemory}
+                            />
+                        ) : activeTab === "system" ? (
+                            <HubSystemView
+                                publishImmediate={publishImmediate}
+                                isAwake={isAwake}
+                                onTogglePower={handlePowerToggle}
+                                logs={logs}
+                                clearLogs={clearLogs}
+                            />
+                        ) : (
+                            <HubMqttView
+                                activeConfig={activeConfig}
+                                connectToBroker={connectToBroker}
+                                disconnect={disconnect}
+                                reconnect={reconnect}
+                                isConnected={isConnected}
+                                isConnecting={isConnecting}
+                                connectionError={connectionError}
+                                latencyRtt={latencyRtt}
+                            />
+                        )}
+                    </div>
+                )}
+            </div>
         </>
     )
 }

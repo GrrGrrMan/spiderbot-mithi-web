@@ -1,26 +1,57 @@
-// web-ui/src/hooks/useMqtt.js
+// src/hooks/useMqtt.js
 import { useState, useEffect, useCallback, useRef } from "react"
 import mqtt from "mqtt"
-import { resolveMqttBrokerUrl } from "../utils/networkConfig"
+import { settingsStorage } from "../services/storage"
+import { resolveMqttBrokerUrl, resolvePiHost } from "../utils/networkConfig"
 
-const getDeviceId = (defaultId = "hexapod-s3-01") => {
-    if (typeof window === "undefined") return defaultId
-    const params = new URLSearchParams(window.location.search)
-    return params.get("device") || defaultId
-}
+/**
+ * Builds the initial connection configuration, prioritizing URL query parameters
+ * over saved localStorage settings, falling back to networkConfig defaults.
+ */
+function resolveInitialConfig(searchParams) {
+    const cachedMqtt = settingsStorage.getSlice("mqtt") || {}
+    const queryBroker = searchParams?.get("broker")
+    const queryDevice = searchParams?.get("device")
+    const queryCam = searchParams?.get("cam")
 
-const getCameraDeviceId = (defaultId = "hexapod-cam-01") => {
-    if (typeof window === "undefined") return defaultId
-    const params = new URLSearchParams(window.location.search)
-    return params.get("cam") || defaultId
+    const fallbackUrl = resolveMqttBrokerUrl(searchParams)
+    const effectiveBrokerUrl = queryBroker ? fallbackUrl : (cachedMqtt.brokerUrl || fallbackUrl)
+    const effectiveDeviceId = queryDevice || cachedMqtt.deviceId || "hexapod-s3-01"
+    const effectiveCamId = queryCam || cachedMqtt.camDeviceId || "hexapod-cam-01"
+
+    return {
+        ...cachedMqtt,
+        brokerUrl: effectiveBrokerUrl,
+        deviceId: effectiveDeviceId,
+        camDeviceId: effectiveCamId,
+        topicPrefix: cachedMqtt.topicPrefix || "hexapod",
+        username: cachedMqtt.username || "",
+        password: cachedMqtt.password || "",
+        clean: cachedMqtt.clean !== undefined ? cachedMqtt.clean : true,
+        keepalive: cachedMqtt.keepalive || 60,
+        reconnectPeriod: cachedMqtt.reconnectPeriod || 4000,
+    }
 }
 
 export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
-    const searchParamsRef = useRef(typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null)
-    const deviceId = deviceIdOverride || getDeviceId()
-    const camDeviceId = getCameraDeviceId()
+    const searchParamsRef = useRef(
+        typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null
+    )
 
+    const [activeConfig, setActiveConfig] = useState(() => {
+        const init = resolveInitialConfig(searchParamsRef.current)
+        if (brokerUrlOverride) init.brokerUrl = brokerUrlOverride
+        if (deviceIdOverride) init.deviceId = deviceIdOverride
+        return init
+    })
+
+    // Connection lifecycle states
     const [isConnected, setIsConnected] = useState(false)
+    const [isConnecting, setIsConnecting] = useState(false)
+    const [connectionError, setConnectionError] = useState(null)
+    const [latencyRtt, setLatencyRtt] = useState(null)
+
+    // Hardware Telemetry & Message states
     const [telemetry, setTelemetry] = useState(null)
     const [logs, setLogs] = useState([])
     const [config, setConfig] = useState(null)
@@ -32,11 +63,15 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
     const [memoryState, setMemoryState] = useState(null)
 
     const clientRef = useRef(null)
+    const activeConfigRef = useRef(activeConfig)
+    activeConfigRef.current = activeConfig
+
+    // Throttled publish buffers
     const lastPublishRef = useRef(0)
     const pendingPublishRef = useRef(null)
     const trailingTimerRef = useRef(null)
 
-    // Guards to prevent synchronous React render thrashing with trailing guarantees
+    // 2Hz Telemetry throttle guards
     const lastTelemetryUpdateRef = useRef(0)
     const lastCamTelemetryUpdateRef = useRef(0)
     const pendingTelemetryRef = useRef(null)
@@ -45,7 +80,7 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
     const clearLogs = useCallback(() => setLogs([]), [])
     const clearAiMessages = useCallback(() => setAiMessages([]), [])
 
-    // Safety watchdog: auto-clear 'playing' lock if firmware packet dropped
+    // Safety watchdog: clear 'playing' lock if firmware packet is lost
     const isAudioPlaying = audioStatus?.state === "playing"
     useEffect(() => {
         if (isAudioPlaying) {
@@ -56,51 +91,85 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         }
     }, [isAudioPlaying])
 
+    // Primary connection lifecycle effect
     useEffect(() => {
-        const resolvedUrl = brokerUrlOverride || resolveMqttBrokerUrl(searchParamsRef.current)
-        console.log(`[MQTT WebUI] Connecting to Pi Broker: ${resolvedUrl}`)
+        const conf = activeConfig
+        const resolvedUrl = conf.brokerUrl
+        const prefix = conf.topicPrefix || "hexapod"
+        const deviceId = conf.deviceId
+        const camDeviceId = conf.camDeviceId
 
-        const client = mqtt.connect(resolvedUrl, {
+        setIsConnecting(true)
+        setConnectionError(null)
+
+        const clientOptions = {
             clientId: `web-ui-${Math.random().toString(16).substr(2, 8)}`,
-            clean: true,
-            reconnectPeriod: 4000,
-        })
+            clean: conf.clean,
+            keepalive: conf.keepalive,
+            reconnectPeriod: conf.reconnectPeriod,
+        }
+
+        if (conf.username) clientOptions.username = conf.username
+        if (conf.password) clientOptions.password = conf.password
+
+        const client = mqtt.connect(resolvedUrl, clientOptions)
+        clientRef.current = client
 
         client.on("connect", () => {
             setIsConnected(true)
-            client.subscribe(`hexapod/${deviceId}/telemetry`)
-            client.subscribe(`hexapod/${deviceId}/logs`)
-            client.subscribe(`hexapod/${deviceId}/config`)
-            client.subscribe(`hexapod/${deviceId}/ai`)
-            client.subscribe(`hexapod/${deviceId}/ai/status`)
-            client.subscribe(`hexapod/${deviceId}/audio/status`)
-            client.subscribe(`hexapod/${deviceId}/ai/memory/state`)
+            setIsConnecting(false)
+            setConnectionError(null)
+
+            // Subscribe to canonical hardware and AI topics
+            client.subscribe(`${prefix}/${deviceId}/telemetry`)
+            client.subscribe(`${prefix}/${deviceId}/logs`)
+            client.subscribe(`${prefix}/${deviceId}/config`)
+            client.subscribe(`${prefix}/${deviceId}/ai`)
+            client.subscribe(`${prefix}/${deviceId}/ai/status`)
+            client.subscribe(`${prefix}/${deviceId}/audio/status`)
+            client.subscribe(`${prefix}/${deviceId}/ai/memory/state`)
 
             if (camDeviceId) {
-                client.subscribe(`hexapod/${camDeviceId}/telemetry`)
-                client.subscribe(`hexapod/${camDeviceId}/config`)
+                client.subscribe(`${prefix}/${camDeviceId}/telemetry`)
+                client.subscribe(`${prefix}/${camDeviceId}/config`)
             }
         })
 
-        client.on("close", () => setIsConnected(false))
-        client.on("error", (err) => console.warn("[MQTT WebUI] Error:", err))
+        client.on("reconnect", () => {
+            setIsConnecting(true)
+        })
+
+        client.on("close", () => {
+            setIsConnected(false)
+            setIsConnecting(false)
+        })
+
+        client.on("error", err => {
+            setConnectionError(err.message || "MQTT connection error")
+            setIsConnecting(false)
+        })
 
         client.on("message", (topic, message) => {
             const payload = message.toString()
-            const isCamTopic = camDeviceId && topic.startsWith(`hexapod/${camDeviceId}/`)
+            const isCamTopic = camDeviceId && topic.startsWith(`${prefix}/${camDeviceId}/`)
 
             if (topic.endsWith("/telemetry")) {
                 try {
                     const parsed = JSON.parse(payload)
                     const now = Date.now()
-                    
+
+                    // Estimate ping latency if packet includes hardware timestamp
+                    if (parsed.timestamp) {
+                        setLatencyRtt(Math.max(1, Math.round(now - parsed.timestamp)))
+                    }
+
                     if (isCamTopic) {
                         if (now - lastCamTelemetryUpdateRef.current > 500) {
                             setCamTelemetry(parsed)
                             lastCamTelemetryUpdateRef.current = now
                         }
                     } else {
-                        // Throttle React state updates to 2Hz with guaranteed trailing resolution
+                        // Throttle React renders to 2Hz with guaranteed trailing resolution
                         const elapsed = now - lastTelemetryUpdateRef.current
                         if (elapsed > 500) {
                             setTelemetry(parsed)
@@ -123,17 +192,13 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
                                 }, 500 - elapsed)
                             }
                         }
-                        
+
                         if (parsed.audio) {
                             setAudioStatus(prev => {
-                                if (prev?.state === parsed.audio) return prev;
-                                return {
-                                    state: parsed.audio,
-                                    action: prev?.action || "tts"
-                                }
+                                if (prev?.state === parsed.audio) return prev
+                                return { state: parsed.audio, action: prev?.action || "tts" }
                             })
                         }
-                        
                     }
                 } catch (e) {
                     console.error("[MQTT WebUI] Telemetry JSON parse error:", e)
@@ -156,47 +221,78 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
                 try {
                     const statusObj = JSON.parse(payload)
                     setAiStatus(statusObj)
-                    if (statusObj.memory) {
-                        setMemoryState(statusObj.memory)
-                    }
+                    if (statusObj.memory) setMemoryState(statusObj.memory)
                 } catch (e) {}
             } else if (topic.endsWith("/ai/memory/state") && !isCamTopic) {
                 try {
-                    const memObj = JSON.parse(payload)
-                    setMemoryState(memObj)
+                    setMemoryState(JSON.parse(payload))
                 } catch (e) {}
             } else if (topic.endsWith("/audio/status") && !isCamTopic) {
-                try { setAudioStatus(JSON.parse(payload)) } catch (e) {}
+                try {
+                    setAudioStatus(JSON.parse(payload))
+                } catch (e) {}
             }
         })
 
-        clientRef.current = client
-
         return () => {
-            if (client) client.end()
+            if (client) {
+                client.end(false)
+            }
         }
-    }, [brokerUrlOverride, deviceId, camDeviceId])
+    }, [activeConfig])
 
+    // Periodic heartbeat loop
     useEffect(() => {
         if (!isConnected || !clientRef.current) return
+        const prefix = activeConfig.topicPrefix || "hexapod"
+        const targetTopic = `${prefix}/${activeConfig.deviceId}/heartbeat`
+
         const heartbeatInterval = setInterval(() => {
-            const targetTopic = `hexapod/${deviceId}/heartbeat`
             try {
-                clientRef.current.publish(targetTopic, JSON.stringify({ type: "heartbeat", timestamp: Date.now() }))
+                clientRef.current.publish(
+                    targetTopic,
+                    JSON.stringify({ type: "heartbeat", timestamp: Date.now() })
+                )
             } catch (err) {}
         }, 3000)
+
         return () => clearInterval(heartbeatInterval)
-    }, [isConnected, deviceId])
+    }, [isConnected, activeConfig])
+
+    // Hot-swap broker connection dynamically
+    const connectToBroker = useCallback((newConfig) => {
+        setActiveConfig(prev => {
+            const merged = { ...prev, ...newConfig }
+            settingsStorage.setSlice("mqtt", merged)
+            return merged
+        })
+    }, [])
+
+    const disconnect = useCallback(() => {
+        if (clientRef.current) {
+            clientRef.current.end(false)
+            setIsConnected(false)
+            setIsConnecting(false)
+        }
+    }, [])
+
+    const reconnect = useCallback(() => {
+        setActiveConfig(prev => ({ ...prev }))
+    }, [])
 
     const publishImmediate = useCallback((topic, payload) => {
         if (!clientRef.current || !isConnected) return
-        const targetTopic = topic === "hexapod/cmd" ? `hexapod/${deviceId}/cmd` : topic
+        const prefix = activeConfigRef.current.topicPrefix || "hexapod"
+        const deviceId = activeConfigRef.current.deviceId
+        const targetTopic = topic === "hexapod/cmd" ? `${prefix}/${deviceId}/cmd` : topic
         clientRef.current.publish(targetTopic, JSON.stringify(payload))
-    }, [isConnected, deviceId])
+    }, [isConnected])
 
     const publishThrottled = useCallback((topic, payload) => {
         if (!clientRef.current || !isConnected) return
-        const targetTopic = topic === "hexapod/cmd" ? `hexapod/${deviceId}/cmd` : topic
+        const prefix = activeConfigRef.current.topicPrefix || "hexapod"
+        const deviceId = activeConfigRef.current.deviceId
+        const targetTopic = topic === "hexapod/cmd" ? `${prefix}/${deviceId}/cmd` : topic
         const now = Date.now()
         const elapsed = now - lastPublishRef.current
 
@@ -222,41 +318,59 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
                 pendingPublishRef.current = null
             }, 100 - elapsed)
         }
-    }, [isConnected, deviceId])
+    }, [isConnected])
 
     const publishAi = useCallback((payload) => {
         if (!clientRef.current || !isConnected) return
-        clientRef.current.publish(`hexapod/${deviceId}/ai`, JSON.stringify(payload))
-    }, [isConnected, deviceId])
+        const prefix = activeConfigRef.current.topicPrefix || "hexapod"
+        clientRef.current.publish(`${prefix}/${activeConfigRef.current.deviceId}/ai`, JSON.stringify(payload))
+    }, [isConnected])
 
     const publishAiConfig = useCallback((payload) => {
         if (!clientRef.current || !isConnected) return
-        clientRef.current.publish(`hexapod/${deviceId}/ai/config`, JSON.stringify(payload))
-    }, [isConnected, deviceId])
+        const prefix = activeConfigRef.current.topicPrefix || "hexapod"
+        clientRef.current.publish(`${prefix}/${activeConfigRef.current.deviceId}/ai/config`, JSON.stringify(payload))
+    }, [isConnected])
 
     const publishAiMemory = useCallback((payload) => {
         if (!clientRef.current || !isConnected) return
-        clientRef.current.publish(`hexapod/${deviceId}/ai/memory/cmd`, JSON.stringify(payload))
-    }, [isConnected, deviceId])
+        const prefix = activeConfigRef.current.topicPrefix || "hexapod"
+        clientRef.current.publish(`${prefix}/${activeConfigRef.current.deviceId}/ai/memory/cmd`, JSON.stringify(payload))
+    }, [isConnected])
 
     const publishAudio = useCallback((payload) => {
         if (!clientRef.current || !isConnected) return
-        clientRef.current.publish(`hexapod/${deviceId}/audio`, JSON.stringify(payload))
-    }, [isConnected, deviceId])
+        const prefix = activeConfigRef.current.topicPrefix || "hexapod"
+        clientRef.current.publish(`${prefix}/${activeConfigRef.current.deviceId}/audio`, JSON.stringify(payload))
+    }, [isConnected])
 
     return {
+        // Connection lifecycle & Diagnostics
         isConnected,
+        isConnecting,
+        connectionError,
+        latencyRtt,
+        activeConfig,
+        connectToBroker,
+        disconnect,
+        reconnect,
+
+        // Telemetry & Hardware Config
         telemetry,
         logs,
         config,
-        deviceId,
-        camDeviceId,
+        deviceId: activeConfig.deviceId,
+        camDeviceId: activeConfig.camDeviceId,
         camTelemetry,
         camConfig,
+
+        // AI & Audio streams
         aiMessages,
         aiStatus,
         audioStatus,
         memoryState,
+
+        // Publishers & actions
         publishThrottled,
         publishImmediate,
         publishAi,
@@ -267,3 +381,5 @@ export function useMqtt(brokerUrlOverride = null, deviceIdOverride = null) {
         clearAiMessages,
     }
 }
+
+export default useMqtt

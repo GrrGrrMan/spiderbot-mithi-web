@@ -1,17 +1,19 @@
 // web-ui/src/hooks/useAiMemory.js
 import { useState, useEffect, useCallback } from "react"
+import { settingsStorage } from "../services/storage"
 
 export const useAiMemory = ({ memoryState = null, publishAiMemory = () => {}, aiStatus = null }) => {
+    const cachedMemory = settingsStorage.getSlice("memory") || {}
     const incoming = memoryState || aiStatus?.memory || {
-        mode: "session",
+        mode: cachedMemory.mode || "session",
         turns_count: 0,
-        pool_count: 0,
-        memory_pool: {},
+        pool_count: Object.keys(cachedMemory.memoryPool || {}).length,
+        memory_pool: cachedMemory.memoryPool || {},
     }
 
-    const [mode, setLocalMode] = useState(incoming.mode || "session")
+    const [mode, setLocalMode] = useState(incoming.mode || cachedMemory.mode || "session")
     const [turnsCount, setLocalTurns] = useState(incoming.turns_count || 0)
-    const [memoryPool, setLocalPool] = useState(incoming.memory_pool || {})
+    const [memoryPool, setLocalPool] = useState(incoming.memory_pool || cachedMemory.memoryPool || {})
     const [notice, setNotice] = useState(null)
 
     // Sync from incoming MQTT heartbeat or topic updates
@@ -19,11 +21,31 @@ export const useAiMemory = ({ memoryState = null, publishAiMemory = () => {}, ai
     useEffect(() => {
         const src = memoryState || aiMemory
         if (src) {
-            if (src.mode) setLocalMode(src.mode)
+            if (src.mode) {
+                setLocalMode(src.mode)
+                settingsStorage.setSlice("memory", { mode: src.mode })
+            }
             if (src.turns_count !== undefined) setLocalTurns(src.turns_count)
-            if (src.memory_pool) setLocalPool(src.memory_pool)
+            if (src.memory_pool) {
+                setLocalPool(src.memory_pool)
+                settingsStorage.setSlice("memory", { memoryPool: src.memory_pool })
+            }
         }
     }, [memoryState, aiMemory])
+
+    // Cross-tab synchronization for AI memory
+    useEffect(() => {
+        const unsubscribe = settingsStorage.subscribe((allSettings, sliceKey) => {
+            if (!sliceKey || sliceKey === "memory") {
+                const fresh = settingsStorage.getSlice("memory")
+                if (fresh) {
+                    if (fresh.mode) setLocalMode(fresh.mode)
+                    if (fresh.memoryPool) setLocalPool(fresh.memoryPool)
+                }
+            }
+        })
+        return () => unsubscribe()
+    }, [])
 
     const showNotice = (msg) => {
         setNotice(msg)
@@ -32,6 +54,7 @@ export const useAiMemory = ({ memoryState = null, publishAiMemory = () => {}, ai
 
     const setMode = useCallback((newMode) => {
         setLocalMode(newMode)
+        settingsStorage.setSlice("memory", { mode: newMode })
         publishAiMemory({ action: "set_mode", mode: newMode })
         showNotice(`Mode: ${newMode.toUpperCase()}`)
     }, [publishAiMemory])
@@ -40,7 +63,11 @@ export const useAiMemory = ({ memoryState = null, publishAiMemory = () => {}, ai
         const k = key.trim()
         const v = value.trim()
         if (!k || !v) return
-        setLocalPool(prev => ({ ...prev, [k]: v }))
+        setLocalPool(prev => {
+            const next = { ...prev, [k]: v }
+            settingsStorage.setSlice("memory", { memoryPool: next })
+            return next
+        })
         publishAiMemory({ action: "set_fact", key: k, value: v })
         showNotice(`Saved: ${k}`)
     }, [publishAiMemory])
@@ -50,6 +77,7 @@ export const useAiMemory = ({ memoryState = null, publishAiMemory = () => {}, ai
         setLocalPool(prev => {
             const next = { ...prev }
             delete next[key]
+            settingsStorage.setSlice("memory", { memoryPool: next })
             return next
         })
         publishAiMemory({ action: "delete_fact", key })
@@ -66,6 +94,7 @@ export const useAiMemory = ({ memoryState = null, publishAiMemory = () => {}, ai
         if (window.confirm("⚠️ Factory Reset: Wipe ALL session turns and persistent pool facts?")) {
             setLocalTurns(0)
             setLocalPool({})
+            settingsStorage.setSlice("memory", { mode: "session", memoryPool: {} })
             publishAiMemory({ action: "clear_all" })
             showNotice("All memory wiped")
         }

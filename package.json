@@ -2,6 +2,7 @@
     "name": "hexapod",
     "version": "0.1.0",
     "private": true,
+    "homepage": ".",
     "dependencies": {
         "mqtt": "^4.3.7",
         "plotly.js": "^1.54.7",
@@ -14,6 +15,7 @@
         "react-scripts": "3.4.4"
     },
     "scripts": {
+        "prebuild": "npm run tailwind:build",
         "tailwind:build": "tailwindcss -i src/styles/tailwind.css -o src/tailwind-output.css",
         "tailwind:watch": "tailwindcss -i src/styles/tailwind.css -o src/tailwind-output.css --watch",
         "analyze": "cross-env NODE_OPTIONS=--openssl-legacy-provider node scripts/analyze.js",
