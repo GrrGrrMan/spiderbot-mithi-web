@@ -57,7 +57,12 @@ export const resolveMqttBrokerUrl = (searchParams) => {
     const isHttps = window.location.protocol === "https:"
     const currentHost = window.location.hostname
 
-    // 2. Development Mode on PC -> Direct WebSocket to Pi's Mosquitto port 9001
+    // 2. Public Web / GitHub Pages -> Default to secure cloud WSS sandbox to prevent mixed content & local network prompts
+    if (currentHost.endsWith("github.io")) {
+        return "wss://broker.emqx.io:8084/mqtt"
+    }
+
+    // 3. Development Mode on PC -> Direct WebSocket to Pi's Mosquitto port 9001
     if (isLocalhost(currentHost)) {
         return `ws://${DEFAULT_PI_MDNS_HOST}:${DEFAULT_MQTT_WS_PORT}`
     }
@@ -83,7 +88,12 @@ export const resolveCameraStreamUrl = (config, telemetry, searchParams) => {
 
     const currentHost = window.location.hostname
 
-    // 2. Local Dev on PC -> Point to Pi's Nginx proxy via resolved Pi host
+    // 2. Public Web / GitHub Pages -> Insecure HTTP LAN camera streams blocked by browser
+    if (currentHost.endsWith("github.io")) {
+        return ""
+    }
+
+    // 3. Local Dev on PC -> Point to Pi's Nginx proxy via resolved Pi host
     if (isLocalhost(currentHost)) {
         const piHost = resolvePiHost(searchParams)
         return `http://${piHost}/cam-stream`

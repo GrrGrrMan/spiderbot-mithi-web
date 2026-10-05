@@ -15,7 +15,9 @@ function resolveInitialConfig(searchParams) {
     const queryCam = searchParams?.get("cam")
 
     const fallbackUrl = resolveMqttBrokerUrl(searchParams)
-    const effectiveBrokerUrl = queryBroker ? fallbackUrl : (cachedMqtt.brokerUrl || fallbackUrl)
+    const isHttps = typeof window !== "undefined" && window.location.protocol === "https:"
+    const rawBroker = queryBroker ? fallbackUrl : (cachedMqtt.brokerUrl || fallbackUrl)
+    const effectiveBrokerUrl = (isHttps && rawBroker.startsWith("ws://")) ? fallbackUrl : rawBroker
     const effectiveDeviceId = queryDevice || cachedMqtt.deviceId || "hexapod-s3-01"
     const effectiveCamId = queryCam || cachedMqtt.camDeviceId || "hexapod-cam-01"
 
