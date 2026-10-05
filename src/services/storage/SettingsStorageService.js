@@ -1,6 +1,6 @@
 // src/services/storage/SettingsStorageService.js
 import { createStorageAdapter } from "./storageAdapter"
-import { STORAGE_KEY, SCHEMA_VERSION, DEFAULT_APP_SETTINGS } from "./schemaDefaults"
+import { STORAGE_KEY, DEFAULT_APP_SETTINGS } from "./schemaDefaults"
 import { migrateSettings, deepMerge } from "./migrations"
 
 class SettingsStorageService {

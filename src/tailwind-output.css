@@ -200,12 +200,20 @@
   }
 }
 
-.collapse {
-  visibility: collapse
+.visible {
+  visibility: visible
 }
 
 .static {
   position: static
+}
+
+.fixed {
+  position: fixed
+}
+
+.absolute {
+  position: absolute
 }
 
 .relative {
@@ -228,6 +236,10 @@
   display: flex
 }
 
+.inline-flex {
+  display: inline-flex
+}
+
 .table {
   display: table
 }
@@ -242,6 +254,10 @@
 
 .transform {
   transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))
+}
+
+.resize {
+  resize: both
 }
 
 .grid-cols-1 {
@@ -264,8 +280,16 @@
   border-width: 1px
 }
 
-.invert {
-  --tw-invert: invert(100%);
+.uppercase {
+  text-transform: uppercase
+}
+
+.capitalize {
+  text-transform: capitalize
+}
+
+.blur {
+  --tw-blur: blur(8px);
   -webkit-filter: var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow);
           filter: var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)
 }

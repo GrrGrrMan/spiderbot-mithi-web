@@ -14,7 +14,6 @@ import {
 import { MqttProfileSelector } from "./MqttProfileSelector"
 import { MqttDiagnosticsView } from "./MqttDiagnosticsView"
 import { mqttProbe } from "../../services/mqtt"
-import { PROBE_STATUS } from "../../services/mqtt/probeStages"
 import { settingsStorage } from "../../services/storage"
 
 export const MqttTargetingPanel = ({
@@ -242,7 +241,7 @@ export const MqttTargetingPanel = ({
                     onClick={() => setIsSecurityOpen(prev => !prev)}
                     style={accordionHeaderBtnStyle}
                 >
-                    <span>🔒 CREDENTIALS & SECURITY {draft.username ? "(Active)" : "(Optional)"}</span>
+                    <span><span role="img" aria-label="lock">🔒</span> CREDENTIALS & SECURITY {draft.username ? "(Active)" : "(Optional)"}</span>
                     <span>{isSecurityOpen ? "▲" : "▼"}</span>
                 </button>
 

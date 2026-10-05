@@ -64,6 +64,6 @@ export function normalizeBrokerUrl(input) {
  */
 export function isValidWsUrl(url) {
     if (!url) return false
-    const wsRegex = /^(ws|wss):\/\/([a-zA-Z0-9\.\-_]+)(:(\d+))?(\/.*)?$/
+    const wsRegex = /^(ws|wss):\/\/([a-zA-Z0-9._-]+)(:(\d+))?(\/.*)?$/
     return wsRegex.test(url)
 }

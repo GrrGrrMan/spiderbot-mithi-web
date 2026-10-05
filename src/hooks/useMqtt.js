@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import mqtt from "mqtt"
 import { settingsStorage } from "../services/storage"
-import { resolveMqttBrokerUrl, resolvePiHost } from "../utils/networkConfig"
+import { resolveMqttBrokerUrl } from "../utils/networkConfig"
 
 /**
  * Builds the initial connection configuration, prioritizing URL query parameters
