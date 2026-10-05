@@ -2,11 +2,15 @@
 import React from "react"
 import { PRESET_PROFILES } from "../../constants/presetProfiles"
 
-export const MqttProfileSelector = ({ activePresetId, onSelectPreset }) => (
-    <div style={{ marginBottom: "10px" }}>
-        <span style={labelStyle}>QUICK-SELECT TARGET PROFILES:</span>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-            {PRESET_PROFILES.map(profile => {
+export const MqttProfileSelector = ({ activePresetId, onSelectPreset }) => {
+    const isHttps = typeof window !== "undefined" && window.location.protocol === "https:"
+    const visibleProfiles = PRESET_PROFILES.filter(p => !isHttps || !p.config.brokerUrl.startsWith("ws://"))
+
+    return (
+        <div style={{ marginBottom: "10px" }}>
+            <span style={labelStyle}>QUICK-SELECT TARGET PROFILES:</span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                {visibleProfiles.map(profile => {
                 const isSelected = activePresetId === profile.id
                 return (
                     <button
@@ -37,9 +41,10 @@ export const MqttProfileSelector = ({ activePresetId, onSelectPreset }) => (
                     </button>
                 )
             })}
+            </div>
         </div>
-    </div>
-)
+    )
+}
 
 const labelStyle = {
     fontSize: "0.6rem",
